@@ -18,13 +18,14 @@ Franja compacta sobre el cuadro de texto de Claude Code que reparte el uso del b
 | `/uso-continuar 3` / `/uso-continuar todas` | Lo mismo para la sesión n.º 3 del desglose, o para todas. |
 | `/uso-config` | Abre el panel de configuración: **Ajustes**, **Historial** y **Comandos** (también: botón **⚙ Configuración** del desglose). |
 | `/uso-historial` | Abre el mismo panel directo en el historial. |
+| `/uso-sin-freno` / `/uso-sin-freno 3` | Activa o quita el **∞**: esa sesión ignora el freno global hasta el reinicio (máximo 1 a la vez por defecto). |
 | `/uso-prueba-freno` | Simula el freno en esta sesión para probarlo. Repítelo para terminar la prueba. |
 
 Los comandos con número o texto (`/uso-limite 30`, `/uso-pausar 3`): presiona **Esc** antes de Enter para cerrar el menú de sugerencias, o el número se pierde.
 
 ## Botones del desglose (›)
 
-- En cada fila: **−** / **+** bajan o suben el tope de esa sesión de a 10 % (bajo 10 % queda sin tope) y **⏸** / **▶** la pausan o reanudan.
+- En cada fila: **−** / **+** bajan o suben el tope de esa sesión de a 10 % (bajo 10 % queda sin tope), **⏸** / **▶** la pausan o reanudan, y **∞** la deja sin freno global (dos toques: el primero avisa, el segundo confirma). Si ya está el máximo de sesiones ∞, los demás botones ∞ quedan tenues.
 - Al pie: **⏸ Todas**, **▶ Todas**, **⚙ Configuración**, y **Continuar** cuando esta sesión está frenada.
 
 ## Configuración
@@ -33,9 +34,11 @@ En **⚙ Configuración → Ajustes** cada persona ajusta con − / +:
 
 | Ajuste | Por defecto | Qué hace |
 | --- | --- | --- |
+| Margen de cierre | 2 % | Cuánto antes del tope de una sesión (o del 100 % en una sesión ∞) empieza el cierre ordenado. |
 | Freno global | 83 % | % del bloque de 5 h en que se frenan todas las sesiones. Lo que queda sobre él es el margen para cerrar ordenado. |
 | Reanudar tras el reinicio | 2 min | Espera después del reinicio antes de retomar las sesiones frenadas. |
 | Tope por defecto | 35 % | Tope de toda sesión sin uno propio (0 = sin tope). |
+| Sesiones sin freno (∞) | 1 | Cuántas pueden ignorar el freno global a la vez (0 = desactivado). |
 | Aviso del tope | 80 % del tope | Cuándo avisar que una sesión se acerca a su tope. |
 
 **Restaurar valores por defecto** vuelve a estos valores. Los ajustes valen para todas tus sesiones.
@@ -57,6 +60,9 @@ En **⚙ Configuración → Ajustes** cada persona ajusta con − / +:
 - **`⏸ frenado · reanuda HH:MM`** en rojo: la sesión está frenada y retomará sola a esa hora (2 min después del reinicio).
 
 ## Freno y reanudación
+
+- **Sesión ∞:** su nombre aparece en el color de Claude con ∞ en el desglose y en su propia franja. Ignora el freno global hasta el próximo reinicio, respeta su propio tope y se detiene sola en 100 % − margen de cierre, para no llegar al corte de Anthropic. Las demás, al frenarse, avisan qué sesión sigue sin freno.
+- **Topes:** el cierre empieza en *tope − margen de cierre*, así la sesión termina cerca de su tope sin pasarse.
 
 - Al 83 % del bloque (ajustable) (o al tope de una sesión), las herramientas se bloquean y Claude cierra con un resumen corto de dónde quedó. El 2 % restante alcanza para ese cierre.
 - Tus mensajes también se bloquean mientras dure el freno; los comandos `/uso-…` siguen funcionando.

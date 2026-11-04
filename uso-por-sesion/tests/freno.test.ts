@@ -17,7 +17,10 @@ const engine = (on: Parameters<Parameters<typeof test>[1]>[1], pct: number) => {
   on('tool.call', () => ({ result: {} }))
   on('prompt.submit', (_, e) => ({ text: e.text }))
   on('command.run', () => ({ text: '' }))
-  return store
+  on('ui.toast', () => ({ value: undefined }))
+  on('clock.after', () => ({ value: { cancel: () => {} } }))
+  return { store, resetsAt } as const
+
 }
 
 test('bajo el 83 % las herramientas pasan', async ($, on) => {
@@ -38,7 +41,7 @@ test('desde el 83 % se frena y /uso-continuar lo libera', async ($, on) => {
 })
 
 test('/uso-continuar sin nada libera solo esta sesión', async ($, on) => {
-  const store = engine(on, 84)
+  const { store } = engine(on, 84)
   await $.command.run({ command: 'uso-continuar', args: '' })
   expect(store.has('freno-aprobado')).toBe(false)
   expect(typeof store.get('freno-ok:yo')).toBe('string')
@@ -55,7 +58,7 @@ test('una sesión pausada se detiene y /uso-reanudar la libera', async ($, on) =
 })
 
 test('/uso-limite guarda y quita el tope', async ($, on) => {
-  const store = engine(on, 10)
+  const { store } = engine(on, 10)
   await $.command.run({ command: 'uso-limite', args: '40' })
   expect(store.get('tope:yo')).toBe(40)
   await $.command.run({ command: 'uso-limite', args: 'quitar' })
@@ -81,7 +84,7 @@ test('el historial abre un panel aparte, vacío al comienzo', async ($, on) => {
 })
 
 test('con datos, el historial dibuja gráficos', async ($, on) => {
-  const store = engine(on, 10)
+  const { store } = engine(on, 10)
   const t = Date.now()
   store.set('historial', [0, 1, 2].map(i => ({
     resetsAt: new Date(t - i * 5 * 3600e3).toISOString(), pct: 40 + i * 20, weekly: 10 + i,
@@ -99,7 +102,7 @@ test('con datos, el historial dibuja gráficos', async ($, on) => {
 })
 
 test('el freno respeta el % configurado', async ($, on) => {
-  const store = engine(on, 84)
+  const { store } = engine(on, 84)
   store.set('config', { brakeAt: 90 })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: {} }))
@@ -117,4 +120,24 @@ test('la configuración muestra los ajustes por defecto', async ($, on) => {
   })
   expect((await ui.find({ type: 'Text', text: /^83 %$/ }))?.text).toBe('83 %')
   await ui.unmount()
+})
+
+test('una sesión ∞ ignora el freno global pero se detiene antes del 100 %', async ($, on) => {
+  const { store, resetsAt } = engine(on, 90)
+  store.set('sinfreno:yo', resetsAt)
+  const r = await $.tool.call({ tool: 'Bash', command: 'ls' })
+  expect('deny' in r).toBe(false)
+})
+
+test('una sesión ∞ cierra al llegar a 100 % menos el margen', async ($, on) => {
+  const { store, resetsAt } = engine(on, 98.5)
+  store.set('sinfreno:yo', resetsAt)
+  const r = await $.tool.call({ tool: 'Bash', command: 'ls' })
+  expect('deny' in r && String(r.deny)).toContain('Límite real cerca')
+})
+
+test('/uso-sin-freno activa el ∞ de esta sesión', async ($, on) => {
+  const { store, resetsAt } = engine(on, 10)
+  await $.command.run({ command: 'uso-sin-freno', args: '' })
+  expect(store.get('sinfreno:yo')).toBe(resetsAt)
 })

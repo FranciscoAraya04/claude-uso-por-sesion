@@ -20,12 +20,14 @@ const selected = atom({ plugin: 'uso-por-sesion', key: 'selected' } as const, ''
 const histRange = atom({ plugin: 'uso-por-sesion', key: 'histRange' } as const, 'semana')
 const histSession = atom({ plugin: 'uso-por-sesion', key: 'histSession' } as const, '')
 const cfgTab = atom({ plugin: 'uso-por-sesion', key: 'cfgTab' } as const, 'ajustes')
+// Sesión cuyo botón ∞ espera el segundo toque de confirmación ('' = ninguna).
+const armed = atom({ plugin: 'uso-por-sesion', key: 'armed' } as const, '')
 const stoppedBy = atom({ plugin: 'uso-por-sesion', key: 'stoppedBy' } as const, '')
 
 const FIVE_HOURS = 5 * 3600e3
 // Freno: al 83 % del bloque se detiene todo; el 2 % restante alcanza para cerrar ordenado.
 // Ajustes de cada persona, guardados en el almacén compartido; estos son los valores por defecto.
-const DEFAULTS = { brakeAt: 83, marginMin: 2, defaultCap: 35, warnPct: 80 }
+const DEFAULTS = { brakeAt: 83, closeMargin: 2, marginMin: 2, defaultCap: 35, warnPct: 80, maxBypass: 1 }
 type Cfg = typeof DEFAULTS
 const CFG_KEY = 'config'
 let CFG: Cfg = { ...DEFAULTS }
@@ -57,6 +59,8 @@ async function capOf($: { store: { get: (k: string) => Promise<unknown> } }, id:
 }
 const capOkKey = (id: string) => `tope-ok:${id}`
 const pauseKey = (id: string) => `pausa:${id}`
+// Sesión que ignora el freno global hasta el reinicio guardado (resetsAt).
+const bypassKey = (id: string) => `sinfreno:${id}`
 const brakeOkKey = (id: string) => `freno-ok:${id}`
 
 const hhmm = (iso: string | null) => {
@@ -280,6 +284,7 @@ async function refresh($: $T) {
     return {
       ...(cap !== undefined ? { cap } : {}),
       ...((await $.store.get(pauseKey(id))) ? { paused: true } : {}),
+      ...(five.resetsAt && (await $.store.get(bypassKey(id))) === five.resetsAt ? { bypass: true } : {}),
     }
   }
   const shares = await Promise.all(sessions.map(async s => ({
@@ -356,13 +361,19 @@ async function stopReason($: $T): Promise<{ kind: string; text: string } | null>
   }
   const l = await limit($)
   if (!l || Date.parse(l.resetsAt) + resumeMargin() <= Date.now()) return null
-  const brakeOk = (await $.store.get(APPROVED_KEY)) === l.resetsAt || (await $.store.get(brakeOkKey(me))) === l.resetsAt
+  const resumeAt = hhmm(new Date(Date.parse(l.resetsAt) + resumeMargin()).toISOString())
+  const bypass = (await $.store.get(bypassKey(me))) === l.resetsAt
+  if (bypass && l.pct >= 100 - CFG.closeMargin) {
+    return { kind: 'freno', text: `Límite real cerca: el bloque de 5 h va en ${fmt(l.pct)} % y esta sesión (sin freno global) se detiene antes del corte de Anthropic. Se reanuda sola a las ${resumeAt}.` }
+  }
+  const brakeOk = bypass || (await $.store.get(APPROVED_KEY)) === l.resetsAt || (await $.store.get(brakeOkKey(me))) === l.resetsAt
   if (l.pct >= CFG.brakeAt && !brakeOk) {
-    return { kind: 'freno', text: `Freno de uso: el bloque de 5 h va en ${fmt(l.pct)} % (tope ${CFG.brakeAt} %). Se reanuda sola a las ${hhmm(new Date(Date.parse(l.resetsAt) + resumeMargin()).toISOString())}; /uso-continuar la libera antes.` }
+    const free = ((await read($, snapshot))?.sessions ?? []).filter(s => s.bypass).map(s => s.title)
+    return { kind: 'freno', text: `Freno de uso: el bloque de 5 h va en ${fmt(l.pct)} % (freno ${CFG.brakeAt} %).${free.length ? ` Sigue sin freno: ${free.join(', ')}.` : ''} Se reanuda sola a las ${resumeAt}; /uso-continuar la libera antes.` }
   }
   const cap = await capOf($, me)
   const mine = (await read($, snapshot))?.current ?? 0
-  if (cap !== undefined && mine >= cap && (await $.store.get(capOkKey(me))) !== l.resetsAt) {
+  if (cap !== undefined && mine >= Math.max(0, cap - CFG.closeMargin) && (await $.store.get(capOkKey(me))) !== l.resetsAt) {
     return { kind: 'tope', text: `Tope de esta sesión: lleva ${fmt(mine)} % del bloque de 5 h (tope ${fmt(cap)} %). Se reanuda sola tras el reinicio; /uso-continuar la libera antes.` }
   }
   return null
@@ -396,6 +407,40 @@ async function setPaused($: $T, id: string, paused: boolean) {
   await syncStop($)
 }
 
+// Activa o quita el ∞ (sin freno global) de una sesión: hasta CFG.maxBypass a la vez, con un segundo toque para confirmar.
+async function toggleBypass($: $T, id: string) {
+  const l = await limit($)
+  if (!l) return
+  const snap = await read($, snapshot)
+  const list = snap?.sessions ?? []
+  const title = list.find(s => s.id === id)?.title ?? 'esta sesión'
+  if ((await $.store.get(bypassKey(id))) === l.resetsAt) {
+    await $.store.delete(bypassKey(id))
+    await update($, armed, () => '')
+    await refresh($).catch(() => {})
+    await syncStop($)
+    $.ui.toast(`${title} vuelve a respetar el freno global.`)
+    return
+  }
+  const active = list.filter(s => s.bypass && s.id !== id)
+  if (CFG.maxBypass <= 0) return void $.ui.toast('Sin freno global está desactivado en Configuración.')
+  if (active.length >= CFG.maxBypass) {
+    return void $.ui.toast(`Ya ${active.length === 1 ? 'hay 1 sesión' : `hay ${active.length} sesiones`} sin freno: ${active.map(s => s.title).join(', ')}. Desactívala primero.`)
+  }
+  if ((await read($, armed)) !== id) {
+    await update($, armed, () => id)
+    $.ui.toast(`${title} podrá seguir pasado el ${CFG.brakeAt} % y agotar el bloque; las demás se frenarán. Se detiene en ${100 - CFG.closeMargin} % para cerrar ordenada. Toca ∞ de nuevo para confirmar.`)
+    $.clock.after(10000, () => void read($, armed).then(a => (a === id ? update($, armed, () => '') : undefined)))
+    return
+  }
+  await update($, armed, () => '')
+  await $.store.set(bypassKey(id), l.resetsAt)
+  await refresh($).catch(() => {})
+  await syncStop($)
+  await maybeResume($)
+  $.ui.toast(`${title} queda sin freno global hasta el reinicio de las ${hhmm(l.resetsAt)}.`)
+}
+
 // Sesiones de la última lista del desglose: un número (1, 2…), "todas" o vacío (esta sesión).
 async function targets($: $T, arg: string) {
   const me = await $.session.id()
@@ -415,6 +460,7 @@ export const register: Register = on => {
     await $.command.register({ name: 'uso-continuar', description: 'Libera freno y tope de esta sesión, la n° del desglose o todas, hasta el reinicio', argumentHint: '[n° | todas]' })
     await $.command.register({ name: 'uso-prueba-freno', description: 'Simula el freno en esta sesión (repite para terminar la prueba)' })
     await $.command.register({ name: 'uso-config', description: 'Abre la configuración: ajustes, historial y ayuda' })
+    await $.command.register({ name: 'uso-sin-freno', description: 'Activa o quita el ∞ (ignorar freno global) de esta sesión o la n° del desglose', argumentHint: '[n°]' })
     await $.command.register({ name: 'uso-historial', description: 'Abre el historial de bloques de 5 h en un panel aparte' })
     await $.command.register({ name: 'uso-limite', description: 'Tope de esta sesión en % del bloque de 5 h', argumentHint: '<n> | quitar' })
     await $.command.register({ name: 'uso-pausar', description: 'Pausa esta sesión, la n° del desglose o todas', argumentHint: '[n° | todas]' })
@@ -515,6 +561,15 @@ export const register: Register = on => {
     return { text: 'Prueba del freno activa solo en esta sesión: simula 84 % con reinicio en 1 min (reanuda en ~3 min). Pídele a Claude que haga algo para ver el freno.' }
   })
 
+  on('command.run', { command: 'uso-sin-freno' }, async ($, e) => {
+    if (e.args.trim().toLowerCase() === 'todas') return { text: 'El ∞ se activa de a una sesión.' }
+    const t = (await targets($, e.args))[0]
+    if (!t) return { text: 'No encontré esa sesión. Usa el n° del desglose o nada para esta sesión.' }
+    await update($, armed, () => t.id)
+    await toggleBypass($, t.id)
+    return { text: 'Listo. Revisa el aviso para ver el resultado.' }
+  })
+
   on('command.run', { command: 'uso-config' }, async $ => {
     await update($, cfgTab, () => 'ajustes')
     await $.ui.open({ id: HISTORY_PANE, title: 'Uso por sesión' })
@@ -549,8 +604,10 @@ export const register: Register = on => {
       }
       const rows: { k: keyof Cfg; label: string; hint: string; step: number; min: number; max: number; show: (v: number) => string }[] = [
         { k: 'brakeAt', label: 'Freno global', hint: 'Al llegar a este % del bloque de 5 h se frenan todas las sesiones. Lo que queda sobre el freno es el margen para cerrar ordenado.', step: 1, min: 50, max: 99, show: v => `${v} %` },
+        { k: 'closeMargin', label: 'Margen de cierre', hint: 'Cuánto antes del tope de una sesión (o del 100 % en una sesión ∞) empieza el cierre ordenado.', step: 1, min: 0, max: 10, show: v => `${v} %` },
         { k: 'marginMin', label: 'Reanudar tras el reinicio', hint: 'Minutos de espera después del reinicio antes de retomar las sesiones frenadas.', step: 1, min: 0, max: 30, show: v => `${v} min` },
         { k: 'defaultCap', label: 'Tope por defecto', hint: 'Tope con que parte toda sesión que no tenga uno propio. 0 = sin tope.', step: 5, min: 0, max: 100, show: v => (v ? `${v} %` : 'sin tope') },
+        { k: 'maxBypass', label: 'Sesiones sin freno (∞)', hint: 'Cuántas sesiones pueden ignorar el freno global a la vez. 0 = función desactivada.', step: 1, min: 0, max: 3, show: v => (v ? String(v) : 'desactivado') },
         { k: 'warnPct', label: 'Aviso del tope', hint: 'Avisa cuando una sesión llega a este % de su tope.', step: 5, min: 50, max: 100, show: v => `${v} % del tope` },
       ]
       return (
@@ -586,6 +643,7 @@ export const register: Register = on => {
         ['/uso-pausar [n° | todas]', 'Pausa esta sesión, la n° del desglose o todas.'],
         ['/uso-reanudar [n° | todas]', 'Reanuda; las que trabajaban retoman solas.'],
         ['/uso-continuar [n° | todas]', 'Libera freno y tope hasta el reinicio (sin nada: esta sesión).'],
+        ['/uso-sin-freno [n°]', 'Activa o quita el ∞: la sesión ignora el freno global hasta el reinicio (pide confirmar).'],
         ['/uso-prueba-freno', 'Simula el freno en esta sesión; repítelo para terminar.'],
       ]
       return (
@@ -601,7 +659,7 @@ export const register: Register = on => {
           <Text size="caption" weight="medium">Colores del punto</Text>
           <Text size="caption" dimColor>Verde holgado · amarillo justo · naranjo te pasas por menos de 1 h · rojo 1–2 h · morado 2–3 h · morado oscuro más. Desde rojo parpadea.</Text>
           <Text size="caption" weight="medium">Desglose</Text>
-          <Text size="caption" dimColor>− / + cambian el tope de la sesión de a 10 %; ⏸ / ▶ la pausan o reanudan; la raya clara en la barra marca su tope.</Text>
+          <Text size="caption" dimColor>− / + cambian el tope de la sesión de a 10 %; ⏸ / ▶ la pausan o reanudan; ∞ la deja sin freno global (nombre en color de Claude); la raya clara en la barra marca su tope.</Text>
         </Box>
       )
     }
@@ -687,6 +745,9 @@ export const register: Register = on => {
     }
 
     const cols = e.props.bodyColumns ?? 120
+    const myBypass = !!snap.sessions.find(s => s.id === me)?.bypass
+    const armedId = await read($, armed)
+    const bypassFull = snap.sessions.filter(s => s.bypass).length >= CFG.maxBypass
     const mode = cols >= 95 ? 'wide' : cols >= 65 ? 'mid' : 'narrow'
     const W = { wide: { head: 24, row: 16, name: 36, title: 34 }, mid: { head: 14, row: 10, name: 24, title: 22 }, narrow: { head: 8, row: 10, name: 0, title: 30 } }[mode]
     const cut = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
@@ -713,7 +774,8 @@ export const register: Register = on => {
       <Box flexDirection="column" paddingX="sm">
         <Box flexDirection="row" alignItems="center" gap="sm">
           <Text size="caption" wrap="truncate">
-            {mode !== 'narrow' && <Text weight="medium">Esta sesión </Text>}
+            {myBypass && <Text color="claude" weight="semibold">∞ </Text>}
+            {mode !== 'narrow' && <Text weight="medium" color={myBypass ? 'claude' : undefined}>Esta sesión </Text>}
             <Text weight="semibold" tabular>{fmt(snap.current)} %</Text>
             <Text dimColor>{mode === 'wide' ? ` de ${fmt(snap.fiveHour)} % usado` : ` / ${fmt(snap.fiveHour)} %`}</Text>
           </Text>
@@ -745,8 +807,8 @@ export const register: Register = on => {
           <Box flexDirection="column" gap="xs" paddingTop="xs">
             {snap.sessions.map((s, i) => {
               const name = (
-                <Text size="caption" weight={s.id === me ? 'medium' : 'regular'} dimColor={s.id !== me} wrap="truncate">
-                  {i + 1}. {s.paused ? '⏸ ' : ''}{cut(s.title, W.title)}
+                <Text size="caption" weight={s.id === me || s.bypass ? 'medium' : 'regular'} dimColor={s.id !== me && !s.bypass} color={s.bypass ? 'claude' : undefined} wrap="truncate">
+                  {i + 1}. {s.paused ? '⏸ ' : ''}{s.bypass ? '∞ ' : ''}{cut(s.title, W.title)}
                 </Text>
               )
               const bar = track(W.row, (s.pct / scale) * 100, 0, s.id === me && !s.paused, s.cap === undefined ? undefined : (s.cap / scale) * 100)
@@ -759,6 +821,7 @@ export const register: Register = on => {
                 <Button key={`dn-${s.id}`} label="−" onPress={() => void stepCap($, s.id, -1)} />,
                 <Button key={`up-${s.id}`} label="+" onPress={() => void stepCap($, s.id, 1)} />,
                 <Button key={`p-${s.id}`} label={s.paused ? '▶' : '⏸'} onPress={() => void setPaused($, s.id, !s.paused)} />,
+                ...(CFG.maxBypass > 0 ? [<Button key={`b-${s.id}`} label={armedId === s.id ? '¿Seguro? ∞' : '∞'} dimColor={!s.bypass && bypassFull} variant={s.bypass ? 'primary' : undefined} onPress={() => void toggleBypass($, s.id)} />] : []),
               ]
               if (mode === 'narrow') {
                 return (
