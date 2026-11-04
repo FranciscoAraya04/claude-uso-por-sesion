@@ -1,0 +1,4 @@
+.scan-cache.json
+uso-por-sesion/.claude-plugin/types/
+uso-por-sesion/tsconfig.json
+node_modules/

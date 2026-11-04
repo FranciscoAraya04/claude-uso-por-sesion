@@ -1,0 +1,13 @@
+{
+  "name": "uso-por-sesion",
+  "owner": {
+    "name": "FranciscoAraya04"
+  },
+  "plugins": [
+    {
+      "name": "uso-por-sesion",
+      "source": "./uso-por-sesion",
+      "description": "Franja de uso del bloque de 5 h por sesión, con freno al 83 %, topes, pausas, ritmo e historial"
+    }
+  ]
+}
