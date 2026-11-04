@@ -16,7 +16,8 @@ Franja compacta sobre el cuadro de texto de Claude Code que reparte el uso del b
 | `/uso-reanudar` / `/uso-reanudar 3` / `/uso-reanudar todas` | Igual, pero reanuda. Las que estaban trabajando retoman solas en menos de un minuto. |
 | `/uso-continuar` | Libera el freno del 83 % y el tope **solo de esta sesión** hasta el próximo reinicio. |
 | `/uso-continuar 3` / `/uso-continuar todas` | Lo mismo para la sesión n.º 3 del desglose, o para todas. |
-| `/uso-historial` | Abre el historial de bloques de 5 h en un panel aparte (también: botón **Historial ›** del desglose). |
+| `/uso-config` | Abre el panel de configuración: **Ajustes**, **Historial** y **Comandos** (también: botón **⚙ Configuración** del desglose). |
+| `/uso-historial` | Abre el mismo panel directo en el historial. |
 | `/uso-prueba-freno` | Simula el freno en esta sesión para probarlo. Repítelo para terminar la prueba. |
 
 Los comandos con número o texto (`/uso-limite 30`, `/uso-pausar 3`): presiona **Esc** antes de Enter para cerrar el menú de sugerencias, o el número se pierde.
@@ -24,7 +25,20 @@ Los comandos con número o texto (`/uso-limite 30`, `/uso-pausar 3`): presiona *
 ## Botones del desglose (›)
 
 - En cada fila: **−** / **+** bajan o suben el tope de esa sesión de a 10 % (bajo 10 % queda sin tope) y **⏸** / **▶** la pausan o reanudan.
-- Al pie: **⏸ Todas**, **▶ Todas**, **Historial**, y **Continuar** cuando esta sesión está frenada.
+- Al pie: **⏸ Todas**, **▶ Todas**, **⚙ Configuración**, y **Continuar** cuando esta sesión está frenada.
+
+## Configuración
+
+En **⚙ Configuración → Ajustes** cada persona ajusta con − / +:
+
+| Ajuste | Por defecto | Qué hace |
+| --- | --- | --- |
+| Freno global | 83 % | % del bloque de 5 h en que se frenan todas las sesiones. Lo que queda sobre él es el margen para cerrar ordenado. |
+| Reanudar tras el reinicio | 2 min | Espera después del reinicio antes de retomar las sesiones frenadas. |
+| Tope por defecto | 35 % | Tope de toda sesión sin uno propio (0 = sin tope). |
+| Aviso del tope | 80 % del tope | Cuándo avisar que una sesión se acerca a su tope. |
+
+**Restaurar valores por defecto** vuelve a estos valores. Los ajustes valen para todas tus sesiones.
 
 ## Historial
 
@@ -44,7 +58,7 @@ Los comandos con número o texto (`/uso-limite 30`, `/uso-pausar 3`): presiona *
 
 ## Freno y reanudación
 
-- Al 83 % del bloque (o al tope de una sesión), las herramientas se bloquean y Claude cierra con un resumen corto de dónde quedó. El 2 % restante alcanza para ese cierre.
+- Al 83 % del bloque (ajustable) (o al tope de una sesión), las herramientas se bloquean y Claude cierra con un resumen corto de dónde quedó. El 2 % restante alcanza para ese cierre.
 - Tus mensajes también se bloquean mientras dure el freno; los comandos `/uso-…` siguen funcionando.
 - La sesión retoma sola cuando ya nada la frena: tras el reinicio del bloque, al reanudarla o al liberar el tope. Requiere que la app esté abierta.
 - Los porcentajes por sesión son una estimación a partir de tus registros locales; el total del bloque es el dato oficial.

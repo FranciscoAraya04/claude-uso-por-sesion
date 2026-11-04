@@ -1,6 +1,6 @@
 {
   "name": "uso-por-sesion",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Franja compacta con el % del bloque de 5 h que aporta cada sesión",
   "types": "./types/index.d.ts",
   "license": "MIT",

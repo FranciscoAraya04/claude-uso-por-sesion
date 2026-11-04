@@ -73,7 +73,7 @@ test('el historial abre un panel aparte, vacío al comienzo', async ($, on) => {
   on('ui.open', () => ({ value: { isPlaced: true } }))
   await $.command.run({ command: 'uso-historial', args: '' })
   const ui = await $.ui.mount({
-    plugin: 'uso-por-sesion', component: 'Pane', requestId: 'uso-historial', surface: 'desktop',
+    plugin: 'uso-por-sesion', component: 'Pane', requestId: 'uso-config', surface: 'desktop',
     props: { title: 'Historial de uso', isFocused: false, bodyColumns: 40, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
   })
   expect((await ui.find({ type: 'Text', text: /Aún no hay bloques/ }))?.text).toContain("historial")
@@ -87,11 +87,34 @@ test('con datos, el historial dibuja gráficos', async ($, on) => {
     resetsAt: new Date(t - i * 5 * 3600e3).toISOString(), pct: 40 + i * 20, weekly: 10 + i,
     top: [{ title: 'Sesión A', pct: 20 }, { title: 'Sesión B', pct: 10 }],
   })))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  await $.command.run({ command: 'uso-historial', args: '' })
   const ui = await $.ui.mount({
-    plugin: 'uso-por-sesion', component: 'Pane', requestId: 'uso-historial', surface: 'desktop',
+    plugin: 'uso-por-sesion', component: 'Pane', requestId: 'uso-config', surface: 'desktop',
     props: { title: 'Historial de uso', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
   })
   const chart = await ui.find({ type: 'Svg' })
   expect(chart).toBeTruthy()
+  await ui.unmount()
+})
+
+test('el freno respeta el % configurado', async ($, on) => {
+  const store = engine(on, 84)
+  store.set('config', { brakeAt: 90 })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: {} }))
+  on('clock.every', () => ({ value: { cancel: () => {} } }))
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const r = await $.tool.call({ tool: 'Bash', command: 'ls' })
+  expect('deny' in r).toBe(false)
+})
+
+test('la configuración muestra los ajustes por defecto', async ($, on) => {
+  engine(on, 10)
+  const ui = await $.ui.mount({
+    plugin: 'uso-por-sesion', component: 'Pane', requestId: 'uso-config', surface: 'desktop',
+    props: { title: 'Uso por sesión', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
+  })
+  expect((await ui.find({ type: 'Text', text: /^83 %$/ }))?.text).toBe('83 %')
   await ui.unmount()
 })

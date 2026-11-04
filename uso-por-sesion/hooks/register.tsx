@@ -19,12 +19,23 @@ const warnedFor = atom({ plugin: 'uso-por-sesion', key: 'warnedFor' } as const, 
 const selected = atom({ plugin: 'uso-por-sesion', key: 'selected' } as const, '')
 const histRange = atom({ plugin: 'uso-por-sesion', key: 'histRange' } as const, 'semana')
 const histSession = atom({ plugin: 'uso-por-sesion', key: 'histSession' } as const, '')
+const cfgTab = atom({ plugin: 'uso-por-sesion', key: 'cfgTab' } as const, 'ajustes')
 const stoppedBy = atom({ plugin: 'uso-por-sesion', key: 'stoppedBy' } as const, '')
 
 const FIVE_HOURS = 5 * 3600e3
 // Freno: al 83 % del bloque se detiene todo; el 2 % restante alcanza para cerrar ordenado.
-const BRAKE_AT = 83
-const RESUME_MARGIN = 2 * 60000
+// Ajustes de cada persona, guardados en el almacén compartido; estos son los valores por defecto.
+const DEFAULTS = { brakeAt: 83, marginMin: 2, defaultCap: 35, warnPct: 80 }
+type Cfg = typeof DEFAULTS
+const CFG_KEY = 'config'
+let CFG: Cfg = { ...DEFAULTS }
+const resumeMargin = () => CFG.marginMin * 60000
+
+async function loadCfg($: { store: { get: (k: string) => Promise<unknown> } }) {
+  const raw = await $.store.get(CFG_KEY)
+  CFG = { ...DEFAULTS, ...(raw && typeof raw === 'object' ? (raw as Partial<Cfg>) : {}) }
+  return CFG
+}
 const APPROVED_KEY = 'freno-aprobado'
 const RESUME_TEXT: Record<string, string> = {
   freno: 'El bloque de 5 horas se restableció (freno de uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
@@ -33,17 +44,16 @@ const RESUME_TEXT: Record<string, string> = {
 }
 const capKey = (id: string) => `tope:${id}`
 // Tope por defecto de toda sesión; 0 guardado = sin tope.
-const DEFAULT_CAP = 35
 const CAP_STEP = 10
-const WARN_AT = 0.8
 const HISTORY_KEY = 'historial'
-const HISTORY_PANE = 'uso-historial'
+const HISTORY_PANE = 'uso-config'
 const SEVEN_DAYS = 7 * 24 * 3600e3
 
 async function capOf($: { store: { get: (k: string) => Promise<unknown> } }, id: string) {
   const v = await $.store.get(capKey(id))
   if (v === 0) return undefined
-  return typeof v === 'number' ? v : DEFAULT_CAP
+  if (typeof v === 'number') return v
+  return CFG.defaultCap > 0 ? CFG.defaultCap : undefined
 }
 const capOkKey = (id: string) => `tope-ok:${id}`
 const pauseKey = (id: string) => `pausa:${id}`
@@ -314,7 +324,7 @@ async function recordHistory($: $T, snap: Snapshot) {
 async function warnNearCap($: $T, snap: Snapshot) {
   const me = await $.session.id()
   const cap = snap.sessions.find(s => s.id === me)?.cap
-  if (cap === undefined || !snap.resetsAt || snap.current < cap * WARN_AT) return
+  if (cap === undefined || !snap.resetsAt || snap.current < cap * (CFG.warnPct / 100)) return
   if ((await read($, warnedFor)) === snap.resetsAt) return
   await update($, warnedFor, () => snap.resetsAt!)
   $.ui.toast(`Esta sesión va en ${fmt(snap.current)} % del bloque: cerca de su tope de ${fmt(cap)} %.`)
@@ -345,10 +355,10 @@ async function stopReason($: $T): Promise<{ kind: string; text: string } | null>
     return { kind: 'pausa', text: 'Sesión pausada con /uso-pausar. Se reanuda con /uso-reanudar.' }
   }
   const l = await limit($)
-  if (!l || Date.parse(l.resetsAt) + RESUME_MARGIN <= Date.now()) return null
+  if (!l || Date.parse(l.resetsAt) + resumeMargin() <= Date.now()) return null
   const brakeOk = (await $.store.get(APPROVED_KEY)) === l.resetsAt || (await $.store.get(brakeOkKey(me))) === l.resetsAt
-  if (l.pct >= BRAKE_AT && !brakeOk) {
-    return { kind: 'freno', text: `Freno de uso: el bloque de 5 h va en ${fmt(l.pct)} % (tope ${BRAKE_AT} %). Se reanuda sola a las ${hhmm(new Date(Date.parse(l.resetsAt) + RESUME_MARGIN).toISOString())}; /uso-continuar la libera antes.` }
+  if (l.pct >= CFG.brakeAt && !brakeOk) {
+    return { kind: 'freno', text: `Freno de uso: el bloque de 5 h va en ${fmt(l.pct)} % (tope ${CFG.brakeAt} %). Se reanuda sola a las ${hhmm(new Date(Date.parse(l.resetsAt) + resumeMargin()).toISOString())}; /uso-continuar la libera antes.` }
   }
   const cap = await capOf($, me)
   const mine = (await read($, snapshot))?.current ?? 0
@@ -363,7 +373,7 @@ async function syncStop($: $T) {
   const braked = r !== null
   if (braked !== (await read($, isBraked))) await update($, isBraked, () => braked)
   const l = await limit($)
-  const at = r && r.kind !== 'pausa' && l ? Date.parse(l.resetsAt) + RESUME_MARGIN : 0
+  const at = r && r.kind !== 'pausa' && l ? Date.parse(l.resetsAt) + resumeMargin() : 0
   if (at !== (await read($, resumeAt))) await update($, resumeAt, () => at)
   return r
 }
@@ -404,12 +414,15 @@ export const register: Register = on => {
     await $.command.register({ name: 'uso', description: 'Muestra u oculta la franja de uso por sesión' })
     await $.command.register({ name: 'uso-continuar', description: 'Libera freno y tope de esta sesión, la n° del desglose o todas, hasta el reinicio', argumentHint: '[n° | todas]' })
     await $.command.register({ name: 'uso-prueba-freno', description: 'Simula el freno en esta sesión (repite para terminar la prueba)' })
+    await $.command.register({ name: 'uso-config', description: 'Abre la configuración: ajustes, historial y ayuda' })
     await $.command.register({ name: 'uso-historial', description: 'Abre el historial de bloques de 5 h en un panel aparte' })
     await $.command.register({ name: 'uso-limite', description: 'Tope de esta sesión en % del bloque de 5 h', argumentHint: '<n> | quitar' })
     await $.command.register({ name: 'uso-pausar', description: 'Pausa esta sesión, la n° del desglose o todas', argumentHint: '[n° | todas]' })
     await $.command.register({ name: 'uso-reanudar', description: 'Reanuda esta sesión, la n° del desglose o todas', argumentHint: '[n° | todas]' })
+    await loadCfg($)
     await update($, nowMs, () => Date.now())
     $.clock.every(60000, async () => {
+      await loadCfg($)
       await update($, nowMs, () => Date.now())
       await refresh($).catch(() => {})
       await maybeResume($).catch(() => {})
@@ -502,14 +515,96 @@ export const register: Register = on => {
     return { text: 'Prueba del freno activa solo en esta sesión: simula 84 % con reinicio en 1 min (reanuda en ~3 min). Pídele a Claude que haga algo para ver el freno.' }
   })
 
+  on('command.run', { command: 'uso-config' }, async $ => {
+    await update($, cfgTab, () => 'ajustes')
+    await $.ui.open({ id: HISTORY_PANE, title: 'Uso por sesión' })
+    return { text: 'Configuración abierta.' }
+  })
+
   on('command.run', { command: 'uso-historial' }, async $ => {
-    await $.ui.open({ id: HISTORY_PANE, title: 'Historial de uso' })
+    await update($, cfgTab, () => 'historial')
+    await $.ui.open({ id: HISTORY_PANE, title: 'Uso por sesión' })
     return { text: 'Historial de uso abierto.' }
   })
 
   on('ui.render', { component: 'Pane', requestId: HISTORY_PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
-    const { Box, Text } = els
+    const { Box, Text, Button } = els
+    const tab = await read($, cfgTab)
+    const tabs = (
+      <Box flexDirection="row" gap="sm">
+        {[['ajustes', '⚙ Ajustes'], ['historial', 'Historial'], ['ayuda', 'Comandos']].map(([id, label]) => (
+          <Button key={`tab-${id}`} label={label!} variant={tab === id ? 'primary' : 'secondary'} onPress={() => void update($, cfgTab, () => id!)} />
+        ))}
+      </Box>
+    )
+    if (tab === 'ajustes') {
+      const cfg = await loadCfg($)
+      const set = async (k: keyof Cfg, v: number) => {
+        await $.store.set(CFG_KEY, { ...(await loadCfg($)), [k]: v })
+        await loadCfg($)
+        await refresh($).catch(() => {})
+        await syncStop($)
+        await update($, cfgTab, () => 'ajustes')
+      }
+      const rows: { k: keyof Cfg; label: string; hint: string; step: number; min: number; max: number; show: (v: number) => string }[] = [
+        { k: 'brakeAt', label: 'Freno global', hint: 'Al llegar a este % del bloque de 5 h se frenan todas las sesiones. Lo que queda sobre el freno es el margen para cerrar ordenado.', step: 1, min: 50, max: 99, show: v => `${v} %` },
+        { k: 'marginMin', label: 'Reanudar tras el reinicio', hint: 'Minutos de espera después del reinicio antes de retomar las sesiones frenadas.', step: 1, min: 0, max: 30, show: v => `${v} min` },
+        { k: 'defaultCap', label: 'Tope por defecto', hint: 'Tope con que parte toda sesión que no tenga uno propio. 0 = sin tope.', step: 5, min: 0, max: 100, show: v => (v ? `${v} %` : 'sin tope') },
+        { k: 'warnPct', label: 'Aviso del tope', hint: 'Avisa cuando una sesión llega a este % de su tope.', step: 5, min: 50, max: 100, show: v => `${v} % del tope` },
+      ]
+      return (
+        <Box flexDirection="column" gap="sm">
+          {tabs}
+          {rows.map(r => (
+            <Box key={r.k} flexDirection="column">
+              <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
+                <Text weight="medium">{r.label}</Text>
+                <Box flexGrow={1} />
+                <Button key={`${r.k}-dn`} label="−" onPress={() => void set(r.k, Math.max(r.min, cfg[r.k] - r.step))} />
+                <Text tabular>{r.show(cfg[r.k])}</Text>
+                <Button key={`${r.k}-up`} label="+" onPress={() => void set(r.k, Math.min(r.max, cfg[r.k] + r.step))} />
+              </Box>
+              <Text size="caption" dimColor>{r.hint}{cfg[r.k] === DEFAULTS[r.k] ? '' : ` Por defecto: ${r.show(DEFAULTS[r.k])}.`}</Text>
+            </Box>
+          ))}
+          <Box flexDirection="row" gap="sm">
+            <Button key="cfg-reset" label="Restaurar valores por defecto" onPress={() => void $.store.set(CFG_KEY, { ...DEFAULTS }).then(() => set('brakeAt', DEFAULTS.brakeAt))} />
+          </Box>
+          <Text size="caption" dimColor>Los ajustes valen para todas tus sesiones y llegan a las demás en menos de un minuto.</Text>
+        </Box>
+      )
+    }
+    if (tab === 'ayuda') {
+      const help: [string, string][] = [
+        ['/uso', 'Oculta o muestra la franja (también la ✕).'],
+        ['/uso-config', 'Abre este panel.'],
+        ['/uso-historial', 'Abre el panel en el historial.'],
+        ['/uso-limite 30', 'Tope de esta sesión en % del bloque de 5 h.'],
+        ['/uso-limite', 'Muestra el tope actual de esta sesión.'],
+        ['/uso-limite quitar', 'Quita el tope de esta sesión.'],
+        ['/uso-pausar [n° | todas]', 'Pausa esta sesión, la n° del desglose o todas.'],
+        ['/uso-reanudar [n° | todas]', 'Reanuda; las que trabajaban retoman solas.'],
+        ['/uso-continuar [n° | todas]', 'Libera freno y tope hasta el reinicio (sin nada: esta sesión).'],
+        ['/uso-prueba-freno', 'Simula el freno en esta sesión; repítelo para terminar.'],
+      ]
+      return (
+        <Box flexDirection="column" gap="sm">
+          {tabs}
+          <Text size="caption" dimColor>En los comandos con número o texto, presiona Esc antes de Enter para cerrar el menú de sugerencias.</Text>
+          {help.map(([cmd, what]) => (
+            <Box key={cmd} flexDirection="column">
+              <Text weight="medium" mono>{cmd}</Text>
+              <Text size="caption" dimColor>{what}</Text>
+            </Box>
+          ))}
+          <Text size="caption" weight="medium">Colores del punto</Text>
+          <Text size="caption" dimColor>Verde holgado · amarillo justo · naranjo te pasas por menos de 1 h · rojo 1–2 h · morado 2–3 h · morado oscuro más. Desde rojo parpadea.</Text>
+          <Text size="caption" weight="medium">Desglose</Text>
+          <Text size="caption" dimColor>− / + cambian el tope de la sesión de a 10 %; ⏸ / ▶ la pausan o reanudan; la raya clara en la barra marca su tope.</Text>
+        </Box>
+      )
+    }
     const Svg = 'Svg' in els ? els.Svg : undefined
     const Select = 'Select' in els ? els.Select : undefined
     const raw = await $.store.get(HISTORY_KEY)
@@ -528,6 +623,7 @@ export const register: Register = on => {
     ]
     return (
       <Box flexDirection="column" gap="sm">
+        {tabs}
         <Box flexDirection="row" gap="sm" alignItems="center">
           {Select && <Select key="range" label="Periodo" options={ranges} value={range} onSelect={v => void update($, histRange, () => v)} />}
           {Select && perSession && (
@@ -703,7 +799,7 @@ export const register: Register = on => {
               <Box flexGrow={1} />
               <Button key="pause-all" label="⏸ Todas" onPress={() => void Promise.all(snap.sessions.map(s => $.store.set(pauseKey(s.id), true))).then(() => setPaused($, me, true))} />
               <Button key="resume-all" label="▶ Todas" onPress={() => void Promise.all(snap.sessions.map(s => $.store.delete(pauseKey(s.id)))).then(() => setPaused($, me, false))} />
-              <Button key="history" label="Historial" onPress={() => void $.ui.open({ id: HISTORY_PANE, title: 'Historial de uso' })} />
+              <Button key="config" label="⚙ Configuración" onPress={() => void update($, cfgTab, () => 'ajustes').then(() => $.ui.open({ id: HISTORY_PANE, title: 'Uso por sesión' }))} />
               {braked && <Button key="continue" label="Continuar" variant="primary" onPress={() => void $.command.run({ command: 'uso-continuar', args: '' })} />}
             </Box>
           </Box>
