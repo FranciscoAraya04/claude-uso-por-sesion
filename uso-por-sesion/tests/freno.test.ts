@@ -114,6 +114,8 @@ test('el freno respeta el % configurado', async ($, on) => {
 
 test('la configuración muestra los ajustes por defecto', async ($, on) => {
   engine(on, 10)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  await $.command.run({ command: 'uso-config', args: '' })
   const ui = await $.ui.mount({
     plugin: 'uso-por-sesion', component: 'Pane', requestId: 'uso-config', surface: 'desktop',
     props: { title: 'Uso por sesión', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },

@@ -19,7 +19,7 @@ const warnedFor = atom({ plugin: 'uso-por-sesion', key: 'warnedFor' } as const, 
 const selected = atom({ plugin: 'uso-por-sesion', key: 'selected' } as const, '')
 const histRange = atom({ plugin: 'uso-por-sesion', key: 'histRange' } as const, 'semana')
 const histSession = atom({ plugin: 'uso-por-sesion', key: 'histSession' } as const, '')
-const cfgTab = atom({ plugin: 'uso-por-sesion', key: 'cfgTab' } as const, 'ajustes')
+const cfgTab = atom({ plugin: 'uso-por-sesion', key: 'cfgTab' } as const, 'sesiones')
 // Sesión cuyo botón ∞ espera el segundo toque de confirmación ('' = ninguna).
 const armed = atom({ plugin: 'uso-por-sesion', key: 'armed' } as const, '')
 const stoppedBy = atom({ plugin: 'uso-por-sesion', key: 'stoppedBy' } as const, '')
@@ -612,11 +612,51 @@ export const register: Register = on => {
     const tab = await read($, cfgTab)
     const tabs = (
       <Box flexDirection="row" gap="sm">
-        {[['ajustes', '⚙ Ajustes'], ['historial', 'Historial'], ['ayuda', 'Comandos']].map(([id, label]) => (
+        {[['sesiones', 'Sesiones'], ['ajustes', '⚙ Ajustes'], ['historial', 'Historial'], ['ayuda', 'Comandos']].map(([id, label]) => (
           <Button key={`tab-${id}`} label={label!} variant={tab === id ? 'primary' : 'secondary'} onPress={() => void update($, cfgTab, () => id!)} />
         ))}
       </Box>
     )
+    if (tab === 'sesiones') {
+      const snap = await read($, snapshot)
+      const me = await $.session.id()
+      const Svg = 'Svg' in els ? els.Svg : undefined
+      if (!snap) return <Box flexDirection="column" gap="sm">{tabs}<Text dimColor>Calculando uso…</Text></Box>
+      const scale = Math.max(snap.fiveHour || 1, ...snap.sessions.map(s => s.cap ?? 0))
+      const full = snap.sessions.filter(s => s.bypass).length >= CFG.maxBypass
+      return (
+        <Box flexDirection="column" gap="sm">
+          {tabs}
+          <Text size="caption" dimColor>Bloque de 5 h: {fmt(snap.fiveHour)} % usado · se reinicia a las {hhmm(snap.resetsAt)}</Text>
+          {snap.sessions.map((s, i) => {
+            const atMax = s.cap === undefined || s.cap >= 100
+            return (
+              <Box key={s.id} flexDirection="column" gap="xs">
+                <Box flexDirection="row" gap="sm">
+                  <Text size="caption" weight={s.id === me || s.bypass ? 'medium' : 'regular'} dimColor={s.id !== me && !s.bypass} color={s.bypass ? CLAY : undefined} wrap="truncate">
+                    {i + 1}. {s.paused ? '⏸ ' : ''}{s.bypass ? '∞ ' : ''}{s.title}
+                  </Text>
+                </Box>
+                <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
+                  {Svg && <Svg source={svgBar(140, (s.pct / scale) * 100, 0, s.id === me && !s.paused ? '#3b82f6' : '#7d7b74', s.cap === undefined ? undefined : (s.cap / scale) * 100)} alt={`${fmt(s.pct)} %`} width={140} height={6} />}
+                  <Text size="caption" tabular dimColor={s.id !== me} color={s.cap !== undefined && s.pct >= s.cap ? '#ef4444' : undefined}>
+                    {fmt(s.pct)} %{s.bypass ? ' / ∞' : s.cap !== undefined ? ` / ${fmt(s.cap)} %` : ''}
+                  </Text>
+                  <Box flexGrow={1} />
+                  <Button key={`pdn-${s.id}`} label="−" onPress={() => void (s.bypass ? toggleBypass($, s.id) : stepCap($, s.id, -1))} />
+                  {atMax && CFG.maxBypass > 0 && !s.bypass && full
+                    ? <Box key={`pup-${s.id}`}><Text dimColor>  ∞  </Text></Box>
+                    : atMax && CFG.maxBypass > 0
+                    ? <Button key={`pup-${s.id}`} label={s.bypass ? '∞ activo' : '∞'} variant={s.bypass ? 'primary' : undefined} onPress={() => void (s.bypass ? undefined : toggleBypass($, s.id))} />
+                    : <Button key={`pup-${s.id}`} label="+" onPress={() => void stepCap($, s.id, 1)} />}
+                  <Button key={`pp-${s.id}`} label={s.paused ? '▶' : '⏸'} onPress={() => void setPaused($, s.id, !s.paused)} />
+                </Box>
+              </Box>
+            )
+          })}
+        </Box>
+      )
+    }
     if (tab === 'ajustes') {
       const cfg = await loadCfg($)
       const set = async (k: keyof Cfg, v: number) => {
@@ -772,6 +812,8 @@ export const register: Register = on => {
     const myBypass = !!snap.sessions.find(s => s.id === me)?.bypass
     const bypassFull = snap.sessions.filter(s => s.bypass).length >= CFG.maxBypass
     const mode = cols >= 95 ? 'wide' : cols >= 65 ? 'mid' : 'narrow'
+    const perRow = mode === 'narrow' ? 3 : 2
+    const fit = Math.max(1, Math.min(snap.sessions.length, Math.floor(((e.props.maxRows ?? 40) - 8) / perRow)))
     const W = { wide: { head: 24, row: 16, name: 36, title: 34 }, mid: { head: 14, row: 10, name: 24, title: 22 }, narrow: { head: 8, row: 10, name: 0, title: 30 } }[mode]
     const cut = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
     const cells = (pct: number, width: number) => Math.max(0, Math.min(width, Math.round((pct / 100) * width)))
@@ -828,7 +870,7 @@ export const register: Register = on => {
         </Box>
         {open && (
           <Box flexDirection="column" gap="xs" paddingTop="xs">
-            {snap.sessions.map((s, i) => {
+            {snap.sessions.slice(0, fit).map((s, i) => {
               const name = (
                 <Text size="caption" weight={s.id === me || s.bypass ? 'medium' : 'regular'} dimColor={s.id !== me && !s.bypass} color={s.bypass ? CLAY : undefined} wrap="truncate">
                   {i + 1}. {s.paused ? '⏸ ' : ''}{s.bypass ? '∞ ' : ''}{cut(s.title, W.title)}
@@ -867,6 +909,12 @@ export const register: Register = on => {
                 </Box>
               )
             })}
+            {snap.sessions.length > fit && (
+              <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
+                <Text size="caption" dimColor>+{snap.sessions.length - fit} sesiones más</Text>
+                <Button key="all" label="Ver todas" onPress={() => void update($, cfgTab, () => 'sesiones').then(() => $.ui.open({ id: HISTORY_PANE, title: 'Uso por sesión' }))} />
+              </Box>
+            )}
             {snap.weekly !== null && (() => {
               const c = paceColor(snap.weekly, snap.weeklyResetsAt, now, SEVEN_DAYS)
               const dot = !c ? null : Svg ? (

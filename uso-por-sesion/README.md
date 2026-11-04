@@ -16,7 +16,7 @@ Franja compacta sobre el cuadro de texto de Claude Code que reparte el uso del b
 | `/uso-reanudar` / `/uso-reanudar 3` / `/uso-reanudar todas` | Igual, pero reanuda. Las que estaban trabajando retoman solas en menos de un minuto. |
 | `/uso-continuar` | Libera el freno del 83 % y el tope **solo de esta sesión** hasta el próximo reinicio. |
 | `/uso-continuar 3` / `/uso-continuar todas` | Lo mismo para la sesión n.º 3 del desglose, o para todas. |
-| `/uso-config` | Abre el panel de configuración: **Ajustes**, **Historial** y **Comandos** (también: botón **⚙ Configuración** del desglose). |
+| `/uso-config` | Abre el panel: **Sesiones** (desglose completo), **Ajustes**, **Historial** y **Comandos** (también: botón **⚙ Configuración** del desglose). |
 | `/uso-historial` | Abre el mismo panel directo en el historial. |
 | `/uso-sin-freno` / `/uso-sin-freno 3` | Activa o quita el **∞**: esa sesión ignora el freno global hasta el reinicio (máximo 1 a la vez por defecto). |
 | `/uso-prueba-freno` | Simula el freno en esta sesión para probarlo. Repítelo para terminar la prueba. |
@@ -26,6 +26,7 @@ Los comandos con número o texto (`/uso-limite 30`, `/uso-pausar 3`): presiona *
 ## Botones del desglose (›)
 
 - En cada fila: **−** / **+** bajan o suben el tope de esa sesión de a 10 % (bajo 10 % queda sin tope), **⏸** / **▶** la pausan o reanudan, Cuando el tope llega a 100 % (o la sesión no tiene tope), el **+** se convierte en **∞**: dejarla sin freno global. Con ∞ activo, **−** lo quita. Si ya está el máximo de sesiones ∞, los demás ∞ quedan tenues.
+- Si no caben todas, la franja muestra las que caben y **Ver todas** abre la pestaña **Sesiones** del panel, con la lista completa y los mismos botones.
 - Al pie: **⏸ Todas**, **▶ Todas**, **⚙ Configuración**, y **Continuar** cuando esta sesión está frenada.
 
 ## Configuración

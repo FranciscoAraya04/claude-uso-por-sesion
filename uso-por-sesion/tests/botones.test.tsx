@@ -73,3 +73,32 @@ test('el ∞ sigue activo aunque la hora de reinicio varíe unos segundos', asyn
   expect(store.has('sinfreno:yo')).toBe(false)
   await ui.unmount()
 })
+
+test('con poco espacio la franja muestra las que caben y la pestaña Sesiones todas', async ($, on) => {
+  const store = new Map<string, unknown>()
+  const resetsAt = new Date(Date.now() + 3600e3).toISOString()
+  const sessions = Array.from({ length: 8 }, (_, i) => ({ id: `s${i}`, title: `Sesión ${i}`, w: 8 - i }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: 40, resetsAt }] } }))
+  on('session.id', () => ({ value: 's0' }))
+  on('store.get', (_, e) => ({ value: store.get(e.key) }))
+  on('store.set', (_, e) => (store.set(e.key, e.value), { value: undefined }))
+  on('store.delete', (_, e) => (store.delete(e.key), { value: undefined }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ sessions }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: Date.now() }))
+  on('command.run', () => ({ text: '' }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  await $.command.run({ command: 'uso-limite', args: '30' })
+  const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, maxRows: 16 } })
+  await ui.press({ key: 'toggle' })
+  expect(await ui.find({ type: 'Text', text: /sesiones más/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /Sesión 7/ })).toBeFalsy()
+  await ui.press({ key: 'all' })
+  await ui.unmount()
+  const pane = await $.ui.mount({
+    plugin: 'uso-por-sesion', component: 'Pane', requestId: 'uso-config', surface: 'desktop',
+    props: { title: 'Uso por sesión', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
+  })
+  expect(await pane.find({ type: 'Text', text: /Sesión 7/ })).toBeTruthy()
+  await pane.unmount()
+})
