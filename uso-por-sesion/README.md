@@ -25,7 +25,7 @@ Los comandos con número o texto (`/uso-limite 30`, `/uso-pausar 3`): presiona *
 
 ## Botones del desglose (›)
 
-- En cada fila: **−** / **+** bajan o suben el tope de esa sesión de a 10 % (bajo 10 % queda sin tope), **⏸** / **▶** la pausan o reanudan, Cuando el tope llega a 100 % (o la sesión no tiene tope), el **+** se convierte en **∞**: dejarla sin freno global. Con ∞ activo, **−** lo quita. Si ya está el máximo de sesiones ∞, los demás ∞ quedan tenues.
+- En cada fila: **−** / **+** bajan o suben el tope de esa sesión según el paso configurado (10 % por defecto) (bajo 10 % queda sin tope), **⏸** / **▶** la pausan o reanudan, Cuando el tope llega a 100 % (o la sesión no tiene tope), el **+** se convierte en **∞**: dejarla sin freno global. Con ∞ activo, **−** lo quita. Si ya está el máximo de sesiones ∞, los demás ∞ quedan tenues.
 - Si no caben todas, la franja muestra las que caben y **Ver todas** abre la pestaña **Sesiones** del panel, con la lista completa y los mismos botones.
 - Al pie: **⏸ Todas**, **▶ Todas**, **⚙ Configuración**, y **Continuar** cuando esta sesión está frenada.
 
@@ -39,6 +39,7 @@ En **⚙ Configuración → Ajustes** cada persona ajusta con − / +:
 | Freno global | 83 % | % del bloque de 5 h en que se frenan todas las sesiones. Lo que queda sobre él es el margen para cerrar ordenado. |
 | Reanudar tras el reinicio | 2 min | Espera después del reinicio antes de retomar las sesiones frenadas. |
 | Tope por defecto | 35 % | Tope de toda sesión sin uno propio (0 = sin tope). |
+| Paso de − / + | 10 % | Cuánto sube o baja el tope de una sesión con cada toque. |
 | Sesiones sin freno (∞) | 1 | Cuántas pueden ignorar el freno global a la vez (0 = desactivado). |
 | Aviso del tope | 80 % del tope | Cuándo avisar que una sesión se acerca a su tope. |
 

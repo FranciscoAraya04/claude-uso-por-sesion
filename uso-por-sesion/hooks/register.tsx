@@ -29,7 +29,7 @@ const FIVE_HOURS = 5 * 3600e3
 const CLAY = '#d97757'
 // Freno: al 83 % del bloque se detiene todo; el 2 % restante alcanza para cerrar ordenado.
 // Ajustes de cada persona, guardados en el almacén compartido; estos son los valores por defecto.
-const DEFAULTS = { brakeAt: 83, closeMargin: 2, marginMin: 2, defaultCap: 35, warnPct: 80, maxBypass: 1 }
+const DEFAULTS = { brakeAt: 83, closeMargin: 2, marginMin: 2, defaultCap: 35, warnPct: 80, maxBypass: 1, capStep: 10 }
 type Cfg = typeof DEFAULTS
 const CFG_KEY = 'config'
 let CFG: Cfg = { ...DEFAULTS }
@@ -48,7 +48,6 @@ const RESUME_TEXT: Record<string, string> = {
 }
 const capKey = (id: string) => `tope:${id}`
 // Tope por defecto de toda sesión; 0 guardado = sin tope.
-const CAP_STEP = 10
 const HISTORY_KEY = 'historial'
 const HISTORY_PANE = 'uso-config'
 const SEVEN_DAYS = 7 * 24 * 3600e3
@@ -379,7 +378,7 @@ async function patchRow($: $T, id: string, fn: (s: Snapshot['sessions'][number])
 async function stepCap($: $T, id: string, dir: 1 | -1) {
   const cur = await capOf($, id)
   const base = cur ?? 100
-  const n = Math.round((base + dir * CAP_STEP) / CAP_STEP) * CAP_STEP
+  const n = base + dir * CFG.capStep
   const next = n <= 0 ? 0 : Math.min(100, n)
   await $.store.set(capKey(id), next)
   await $.store.delete(capOkKey(id))
@@ -653,6 +652,7 @@ export const register: Register = on => {
       if (!snap) return <Box flexDirection="column" gap="sm">{tabs}<Text dimColor>Calculando uso…</Text></Box>
       const scale = Math.max(snap.fiveHour || 1, ...snap.sessions.map(s => s.cap ?? 0))
       const full = snap.sessions.filter(s => s.bypass).length >= CFG.maxBypass
+      const barW = Math.max(50, Math.min(140, (e.props.bodyColumns ?? 60) * 8 - 330))
       return (
         <Box flexDirection="column" gap="sm">
           {tabs}
@@ -667,10 +667,10 @@ export const register: Register = on => {
                   </Text>
                 </Box>
                 <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
-                  {Svg && <Svg source={svgBar(140, (s.pct / scale) * 100, 0, s.id === me && !s.paused ? '#3b82f6' : '#7d7b74', s.cap === undefined ? undefined : (s.cap / scale) * 100)} alt={`${fmt(s.pct)} %`} width={140} height={6} />}
-                  <Text size="caption" tabular dimColor={s.id !== me} color={s.cap !== undefined && s.pct >= s.cap ? '#ef4444' : undefined}>
+                  {Svg && <Svg source={svgBar(barW, (s.pct / scale) * 100, 0, s.id === me && !s.paused ? '#3b82f6' : '#7d7b74', s.cap === undefined ? undefined : (s.cap / scale) * 100)} alt={`${fmt(s.pct)} %`} width={barW} height={6} />}
+                  <Box flexShrink={0}><Text size="caption" tabular wrap="truncate" dimColor={s.id !== me} color={s.cap !== undefined && s.pct >= s.cap ? '#ef4444' : undefined}>
                     {fmt(s.pct)} %{s.bypass ? ' / ∞' : s.cap !== undefined ? ` / ${fmt(s.cap)} %` : ''}
-                  </Text>
+                  </Text></Box>
                   <Box flexGrow={1} />
                   <Button key={`pdn-${s.id}`} label="−" onPress={() => void (s.bypass ? toggleBypass($, s.id) : stepCap($, s.id, -1))} />
                   {atMax && CFG.maxBypass > 0 && !s.bypass && full
@@ -700,6 +700,7 @@ export const register: Register = on => {
         { k: 'closeMargin', label: 'Margen de cierre', hint: 'Cuánto antes del tope de una sesión (o del 100 % en una sesión ∞) empieza el cierre ordenado.', step: 1, min: 0, max: 10, show: v => `${v} %` },
         { k: 'marginMin', label: 'Reanudar tras el reinicio', hint: 'Minutos de espera después del reinicio antes de retomar las sesiones frenadas.', step: 1, min: 0, max: 30, show: v => `${v} min` },
         { k: 'defaultCap', label: 'Tope por defecto', hint: 'Tope con que parte toda sesión que no tenga uno propio. 0 = sin tope.', step: 5, min: 0, max: 100, show: v => (v ? `${v} %` : 'sin tope') },
+        { k: 'capStep', label: 'Paso de − / +', hint: 'Cuánto sube o baja el tope de una sesión con cada toque de − / +.', step: 1, min: 1, max: 50, show: v => `${v} %` },
         { k: 'maxBypass', label: 'Sesiones sin freno (∞)', hint: 'Cuántas sesiones pueden ignorar el freno global a la vez. 0 = función desactivada.', step: 1, min: 0, max: 3, show: v => (v ? String(v) : 'desactivado') },
         { k: 'warnPct', label: 'Aviso del tope', hint: 'Avisa cuando una sesión llega a este % de su tope.', step: 5, min: 50, max: 100, show: v => `${v} % del tope` },
       ]
