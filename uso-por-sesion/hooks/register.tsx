@@ -336,13 +336,23 @@ async function warnNearCap($: $T, snap: Snapshot) {
 }
 
 // Sube o baja el tope de una sesión de a 10 %; bajo 10 queda sin tope.
+// Corrige una fila del desglose al instante; el recálculo completo llega después.
+async function patchRow($: $T, id: string, fn: (s: Snapshot['sessions'][number]) => Snapshot['sessions'][number]) {
+  await update($, snapshot, snap => (snap ? { ...snap, sessions: snap.sessions.map(s => (s.id === id ? fn(s) : s)) } : snap))
+}
+
 async function stepCap($: $T, id: string, dir: 1 | -1) {
   const cur = await capOf($, id)
-  const base = cur ?? 0
+  const base = cur ?? 100
   const n = Math.round((base + dir * CAP_STEP) / CAP_STEP) * CAP_STEP
-  await $.store.set(capKey(id), n <= 0 ? 0 : Math.min(100, n))
+  const next = n <= 0 ? 0 : Math.min(100, n)
+  await $.store.set(capKey(id), next)
   await $.store.delete(capOkKey(id))
-  await refresh($).catch(() => {})
+  await patchRow($, id, s => {
+    const { cap: _old, ...rest } = s
+    return next > 0 ? { ...rest, cap: next } : rest
+  })
+  void refresh($).catch(() => {})
   await syncStop($)
 }
 
@@ -402,7 +412,8 @@ async function maybeResume($: $T) {
 async function setPaused($: $T, id: string, paused: boolean) {
   if (paused) await $.store.set(pauseKey(id), true)
   else await $.store.delete(pauseKey(id))
-  await refresh($).catch(() => {})
+  await patchRow($, id, s => ({ ...s, paused }))
+  void refresh($).catch(() => {})
   await maybeResume($)
   await syncStop($)
 }
@@ -417,7 +428,8 @@ async function toggleBypass($: $T, id: string) {
   if ((await $.store.get(bypassKey(id))) === l.resetsAt) {
     await $.store.delete(bypassKey(id))
     await update($, armed, () => '')
-    await refresh($).catch(() => {})
+    await patchRow($, id, s => ({ ...s, bypass: false }))
+    void refresh($).catch(() => {})
     await syncStop($)
     $.ui.toast(`${title} vuelve a respetar el freno global.`)
     return
@@ -435,7 +447,8 @@ async function toggleBypass($: $T, id: string) {
   }
   await update($, armed, () => '')
   await $.store.set(bypassKey(id), l.resetsAt)
-  await refresh($).catch(() => {})
+  await patchRow($, id, s => ({ ...s, bypass: true }))
+  void refresh($).catch(() => {})
   await syncStop($)
   await maybeResume($)
   $.ui.toast(`${title} queda sin freno global hasta el reinicio de las ${hhmm(l.resetsAt)}.`)
@@ -749,6 +762,8 @@ export const register: Register = on => {
     const armedId = await read($, armed)
     const bypassFull = snap.sessions.filter(s => s.bypass).length >= CFG.maxBypass
     const mode = cols >= 95 ? 'wide' : cols >= 65 ? 'mid' : 'narrow'
+    const perRow = mode === 'narrow' ? 3 : 2
+    const fit = Math.max(1, Math.min(snap.sessions.length, Math.floor(((e.props.maxRows ?? 40) - 8) / perRow)))
     const W = { wide: { head: 24, row: 16, name: 36, title: 34 }, mid: { head: 14, row: 10, name: 24, title: 22 }, narrow: { head: 8, row: 10, name: 0, title: 30 } }[mode]
     const cut = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
     const cells = (pct: number, width: number) => Math.max(0, Math.min(width, Math.round((pct / 100) * width)))
@@ -805,7 +820,7 @@ export const register: Register = on => {
         </Box>
         {open && (
           <Box flexDirection="column" gap="xs" paddingTop="xs">
-            {snap.sessions.map((s, i) => {
+            {snap.sessions.slice(0, fit).map((s, i) => {
               const name = (
                 <Text size="caption" weight={s.id === me || s.bypass ? 'medium' : 'regular'} dimColor={s.id !== me && !s.bypass} color={s.bypass ? 'claude' : undefined} wrap="truncate">
                   {i + 1}. {s.paused ? '⏸ ' : ''}{s.bypass ? '∞ ' : ''}{cut(s.title, W.title)}
@@ -818,10 +833,13 @@ export const register: Register = on => {
                 </Text>
               )
               const buttons = [
-                <Button key={`dn-${s.id}`} label="−" onPress={() => void stepCap($, s.id, -1)} />,
-                <Button key={`up-${s.id}`} label="+" onPress={() => void stepCap($, s.id, 1)} />,
+                <Button key={`dn-${s.id}`} label="−" onPress={() => void (s.bypass ? toggleBypass($, s.id) : stepCap($, s.id, -1))} />,
+                (s.cap === undefined || s.cap >= 100) && CFG.maxBypass > 0 && !s.bypass && bypassFull
+                  ? <Text key={`up-${s.id}`} dimColor>  ∞  </Text>
+                  : (s.cap === undefined || s.cap >= 100) && CFG.maxBypass > 0
+                  ? <Button key={`up-${s.id}`} label={s.bypass ? '∞ activo' : armedId === s.id ? '¿Seguro? ∞' : '∞'} dimColor={!s.bypass && bypassFull} variant={s.bypass ? 'primary' : undefined} onPress={() => void (s.bypass ? undefined : toggleBypass($, s.id))} />
+                  : <Button key={`up-${s.id}`} label="+" onPress={() => void stepCap($, s.id, 1)} />,
                 <Button key={`p-${s.id}`} label={s.paused ? '▶' : '⏸'} onPress={() => void setPaused($, s.id, !s.paused)} />,
-                ...(CFG.maxBypass > 0 ? [<Button key={`b-${s.id}`} label={armedId === s.id ? '¿Seguro? ∞' : '∞'} dimColor={!s.bypass && bypassFull} variant={s.bypass ? 'primary' : undefined} onPress={() => void toggleBypass($, s.id)} />] : []),
               ]
               if (mode === 'narrow') {
                 return (
@@ -841,6 +859,7 @@ export const register: Register = on => {
                 </Box>
               )
             })}
+            {snap.sessions.length > fit && <Text size="caption" dimColor>+{snap.sessions.length - fit} sesiones más (agranda la ventana para verlas)</Text>}
             {snap.weekly !== null && (() => {
               const c = paceColor(snap.weekly, snap.weeklyResetsAt, now, SEVEN_DAYS)
               const dot = !c ? null : Svg ? (

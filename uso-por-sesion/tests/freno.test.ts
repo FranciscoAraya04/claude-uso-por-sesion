@@ -18,7 +18,7 @@ const engine = (on: Parameters<Parameters<typeof test>[1]>[1], pct: number) => {
   on('prompt.submit', (_, e) => ({ text: e.text }))
   on('command.run', () => ({ text: '' }))
   on('ui.toast', () => ({ value: undefined }))
-  on('clock.after', () => ({ value: { cancel: () => {} } }))
+  on('clock.after', () => ({ value: {} }))
   return { store, resetsAt } as const
 
 }
@@ -106,7 +106,7 @@ test('el freno respeta el % configurado', async ($, on) => {
   store.set('config', { brakeAt: 90 })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: {} }))
-  on('clock.every', () => ({ value: { cancel: () => {} } }))
+  on('clock.every', () => ({ value: {} }))
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   const r = await $.tool.call({ tool: 'Bash', command: 'ls' })
   expect('deny' in r).toBe(false)
