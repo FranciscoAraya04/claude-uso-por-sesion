@@ -25,6 +25,8 @@ const armed = atom({ plugin: 'uso-por-sesion', key: 'armed' } as const, '')
 const stoppedBy = atom({ plugin: 'uso-por-sesion', key: 'stoppedBy' } as const, '')
 
 const FIVE_HOURS = 5 * 3600e3
+// Terracota de Claude para sesiones ∞ (el tema de la app no lo expone en la franja).
+const CLAY = '#d97757'
 // Freno: al 83 % del bloque se detiene todo; el 2 % restante alcanza para cerrar ordenado.
 // Ajustes de cada persona, guardados en el almacén compartido; estos son los valores por defecto.
 const DEFAULTS = { brakeAt: 83, closeMargin: 2, marginMin: 2, defaultCap: 35, warnPct: 80, maxBypass: 1 }
@@ -762,8 +764,6 @@ export const register: Register = on => {
     const armedId = await read($, armed)
     const bypassFull = snap.sessions.filter(s => s.bypass).length >= CFG.maxBypass
     const mode = cols >= 95 ? 'wide' : cols >= 65 ? 'mid' : 'narrow'
-    const perRow = mode === 'narrow' ? 3 : 2
-    const fit = Math.max(1, Math.min(snap.sessions.length, Math.floor(((e.props.maxRows ?? 40) - 8) / perRow)))
     const W = { wide: { head: 24, row: 16, name: 36, title: 34 }, mid: { head: 14, row: 10, name: 24, title: 22 }, narrow: { head: 8, row: 10, name: 0, title: 30 } }[mode]
     const cut = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
     const cells = (pct: number, width: number) => Math.max(0, Math.min(width, Math.round((pct / 100) * width)))
@@ -789,8 +789,8 @@ export const register: Register = on => {
       <Box flexDirection="column" paddingX="sm">
         <Box flexDirection="row" alignItems="center" gap="sm">
           <Text size="caption" wrap="truncate">
-            {myBypass && <Text color="claude" weight="semibold">∞ </Text>}
-            {mode !== 'narrow' && <Text weight="medium" color={myBypass ? 'claude' : undefined}>Esta sesión </Text>}
+            {myBypass && <Text color={CLAY} weight="semibold">∞ </Text>}
+            {mode !== 'narrow' && <Text weight="medium" color={myBypass ? CLAY : undefined}>Esta sesión </Text>}
             <Text weight="semibold" tabular>{fmt(snap.current)} %</Text>
             <Text dimColor>{mode === 'wide' ? ` de ${fmt(snap.fiveHour)} % usado` : ` / ${fmt(snap.fiveHour)} %`}</Text>
           </Text>
@@ -820,9 +820,9 @@ export const register: Register = on => {
         </Box>
         {open && (
           <Box flexDirection="column" gap="xs" paddingTop="xs">
-            {snap.sessions.slice(0, fit).map((s, i) => {
+            {snap.sessions.map((s, i) => {
               const name = (
-                <Text size="caption" weight={s.id === me || s.bypass ? 'medium' : 'regular'} dimColor={s.id !== me && !s.bypass} color={s.bypass ? 'claude' : undefined} wrap="truncate">
+                <Text size="caption" weight={s.id === me || s.bypass ? 'medium' : 'regular'} dimColor={s.id !== me && !s.bypass} color={s.bypass ? CLAY : undefined} wrap="truncate">
                   {i + 1}. {s.paused ? '⏸ ' : ''}{s.bypass ? '∞ ' : ''}{cut(s.title, W.title)}
                 </Text>
               )
@@ -835,7 +835,7 @@ export const register: Register = on => {
               const buttons = [
                 <Button key={`dn-${s.id}`} label="−" onPress={() => void (s.bypass ? toggleBypass($, s.id) : stepCap($, s.id, -1))} />,
                 (s.cap === undefined || s.cap >= 100) && CFG.maxBypass > 0 && !s.bypass && bypassFull
-                  ? <Text key={`up-${s.id}`} dimColor>  ∞  </Text>
+                  ? <Box key={`up-${s.id}`}><Text dimColor>  ∞  </Text></Box>
                   : (s.cap === undefined || s.cap >= 100) && CFG.maxBypass > 0
                   ? <Button key={`up-${s.id}`} label={s.bypass ? '∞ activo' : armedId === s.id ? '¿Seguro? ∞' : '∞'} dimColor={!s.bypass && bypassFull} variant={s.bypass ? 'primary' : undefined} onPress={() => void (s.bypass ? undefined : toggleBypass($, s.id))} />
                   : <Button key={`up-${s.id}`} label="+" onPress={() => void stepCap($, s.id, 1)} />,
@@ -859,7 +859,6 @@ export const register: Register = on => {
                 </Box>
               )
             })}
-            {snap.sessions.length > fit && <Text size="caption" dimColor>+{snap.sessions.length - fit} sesiones más (agranda la ventana para verlas)</Text>}
             {snap.weekly !== null && (() => {
               const c = paceColor(snap.weekly, snap.weeklyResetsAt, now, SEVEN_DAYS)
               const dot = !c ? null : Svg ? (
