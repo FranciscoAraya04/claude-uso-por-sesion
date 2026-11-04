@@ -272,6 +272,18 @@ async function refresh($: $T) {
   }
   const week = usage.rateLimits.find(r => r.kind === 'seven_day')
   const now = await $.clock.now()
+  if (five.resetsAt && Date.parse(five.resetsAt) <= now) {
+    const prev = await read($, snapshot)
+    await update($, snapshot, () => ({
+      fiveHour: 0,
+      resetsAt: null,
+      weekly: week?.percentUsed ?? prev?.weekly ?? null,
+      weeklyResetsAt: week?.resetsAt ?? prev?.weeklyResetsAt ?? null,
+      current: 0,
+      sessions: (prev?.sessions ?? []).map(s => ({ ...s, pct: 0, bypass: false })),
+    }))
+    return
+  }
   const since = five.resetsAt ? Date.parse(five.resetsAt) - FIVE_HOURS : now - FIVE_HOURS
   const root = $.plugin.root
   const { exitCode, stdout, stderr } = await $.process.run(
@@ -861,7 +873,7 @@ export const register: Register = on => {
             return (
               <Box flexDirection="row" alignItems="center" gap="xs">
                 {dot}
-                <Text size="caption" dimColor wrap="truncate">{mode === 'wide' ? `se reinicia en ${left(snap.resetsAt, now)}` : leftShort(snap.resetsAt, now)}</Text>
+                <Text size="caption" dimColor wrap="truncate">{!snap.resetsAt ? (mode === 'wide' ? 'bloque nuevo · empieza con tu próximo mensaje' : 'bloque nuevo') : mode === 'wide' ? `se reinicia en ${left(snap.resetsAt, now)}` : leftShort(snap.resetsAt, now)}</Text>
               </Box>
             )
           })()}
