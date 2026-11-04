@@ -257,6 +257,10 @@ function weeklyChart(list: HistoryBlock[], width: number) {
 
 const leftShort = (iso: string | null, now: number) => left(iso, now).replace(' min', ' m')
 
+// Mismo bloque de 5 h: la hora de reinicio que informa la API varía unos segundos entre respuestas.
+const sameBlock = (a: unknown, b: string | null | undefined) =>
+  typeof a === 'string' && !!b && Math.abs(Date.parse(a) - Date.parse(b)) < 30 * 60000
+
 const fmt = (n: number) => (n < 10 ? n.toFixed(1) : Math.round(n).toString()).replace('.', ',')
 
 async function refresh($: $T) {
@@ -286,7 +290,7 @@ async function refresh($: $T) {
     return {
       ...(cap !== undefined ? { cap } : {}),
       ...((await $.store.get(pauseKey(id))) ? { paused: true } : {}),
-      ...(five.resetsAt && (await $.store.get(bypassKey(id))) === five.resetsAt ? { bypass: true } : {}),
+      ...(five.resetsAt && sameBlock(await $.store.get(bypassKey(id)), five.resetsAt) ? { bypass: true } : {}),
     }
   }
   const shares = await Promise.all(sessions.map(async s => ({
@@ -332,7 +336,7 @@ async function warnNearCap($: $T, snap: Snapshot) {
   const me = await $.session.id()
   const cap = snap.sessions.find(s => s.id === me)?.cap
   if (cap === undefined || !snap.resetsAt || snap.current < cap * (CFG.warnPct / 100)) return
-  if ((await read($, warnedFor)) === snap.resetsAt) return
+  if (sameBlock(await read($, warnedFor), snap.resetsAt)) return
   await update($, warnedFor, () => snap.resetsAt!)
   $.ui.toast(`Esta sesión va en ${fmt(snap.current)} % del bloque: cerca de su tope de ${fmt(cap)} %.`)
 }
@@ -374,18 +378,18 @@ async function stopReason($: $T): Promise<{ kind: string; text: string } | null>
   const l = await limit($)
   if (!l || Date.parse(l.resetsAt) + resumeMargin() <= Date.now()) return null
   const resumeAt = hhmm(new Date(Date.parse(l.resetsAt) + resumeMargin()).toISOString())
-  const bypass = (await $.store.get(bypassKey(me))) === l.resetsAt
+  const bypass = sameBlock(await $.store.get(bypassKey(me)), l.resetsAt)
   if (bypass && l.pct >= 100 - CFG.closeMargin) {
     return { kind: 'freno', text: `Límite real cerca: el bloque de 5 h va en ${fmt(l.pct)} % y esta sesión (sin freno global) se detiene antes del corte de Anthropic. Se reanuda sola a las ${resumeAt}.` }
   }
-  const brakeOk = bypass || (await $.store.get(APPROVED_KEY)) === l.resetsAt || (await $.store.get(brakeOkKey(me))) === l.resetsAt
+  const brakeOk = bypass || sameBlock(await $.store.get(APPROVED_KEY), l.resetsAt) || sameBlock(await $.store.get(brakeOkKey(me)), l.resetsAt)
   if (l.pct >= CFG.brakeAt && !brakeOk) {
     const free = ((await read($, snapshot))?.sessions ?? []).filter(s => s.bypass).map(s => s.title)
     return { kind: 'freno', text: `Freno de uso: el bloque de 5 h va en ${fmt(l.pct)} % (freno ${CFG.brakeAt} %).${free.length ? ` Sigue sin freno: ${free.join(', ')}.` : ''} Se reanuda sola a las ${resumeAt}; /uso-continuar la libera antes.` }
   }
   const cap = await capOf($, me)
   const mine = (await read($, snapshot))?.current ?? 0
-  if (cap !== undefined && mine >= Math.max(0, cap - CFG.closeMargin) && (await $.store.get(capOkKey(me))) !== l.resetsAt) {
+  if (cap !== undefined && mine >= Math.max(0, cap - CFG.closeMargin) && !sameBlock(await $.store.get(capOkKey(me)), l.resetsAt)) {
     return { kind: 'tope', text: `Tope de esta sesión: lleva ${fmt(mine)} % del bloque de 5 h (tope ${fmt(cap)} %). Se reanuda sola tras el reinicio; /uso-continuar la libera antes.` }
   }
   return null
@@ -429,7 +433,7 @@ async function toggleBypass($: $T, id: string) {
   if (!l) return void $.ui.toast('Aún no hay dato del bloque de 5 h.')
   const list = snap?.sessions ?? []
   const title = list.find(s => s.id === id)?.title ?? 'esta sesión'
-  if ((await $.store.get(bypassKey(id))) === l.resetsAt) {
+  if (sameBlock(await $.store.get(bypassKey(id)), l.resetsAt)) {
     await $.store.delete(bypassKey(id))
     await update($, armed, () => '')
     await patchRow($, id, s => ({ ...s, bypass: false }))
