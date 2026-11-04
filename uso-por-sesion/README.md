@@ -25,7 +25,7 @@ Los comandos con número o texto (`/uso-limite 30`, `/uso-pausar 3`): presiona *
 
 ## Botones del desglose (›)
 
-- En cada fila: **−** / **+** bajan o suben el tope de esa sesión de a 10 % (bajo 10 % queda sin tope), **⏸** / **▶** la pausan o reanudan, Cuando el tope llega a 100 % (o la sesión no tiene tope), el **+** se convierte en **∞**: dejarla sin freno global (dos toques: el primero avisa, el segundo confirma). Con ∞ activo, **−** lo quita. Si ya está el máximo de sesiones ∞, los demás ∞ quedan tenues.
+- En cada fila: **−** / **+** bajan o suben el tope de esa sesión de a 10 % (bajo 10 % queda sin tope), **⏸** / **▶** la pausan o reanudan, Cuando el tope llega a 100 % (o la sesión no tiene tope), el **+** se convierte en **∞**: dejarla sin freno global. Con ∞ activo, **−** lo quita. Si ya está el máximo de sesiones ∞, los demás ∞ quedan tenues.
 - Al pie: **⏸ Todas**, **▶ Todas**, **⚙ Configuración**, y **Continuar** cuando esta sesión está frenada.
 
 ## Configuración

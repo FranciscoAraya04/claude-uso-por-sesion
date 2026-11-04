@@ -362,8 +362,17 @@ async function stepCap($: $T, id: string, dir: 1 | -1) {
   await syncStop($)
 }
 
-async function limit($: $T) {
+async function activeTest($: $T) {
   const t = await read($, test)
+  if (t && Date.parse(t.resetsAt) + resumeMargin() < Date.now()) {
+    await update($, test, () => null)
+    return null
+  }
+  return t
+}
+
+async function limit($: $T) {
+  const t = await activeTest($)
   if (t) return { pct: t.pct, resetsAt: t.resetsAt }
   const five = (await $.session.usage()).rateLimits.find(r => r.kind === 'five_hour')
   return five?.resetsAt ? { pct: five.percentUsed, resetsAt: five.resetsAt } : null
@@ -428,7 +437,7 @@ async function setPaused($: $T, id: string, paused: boolean) {
 async function toggleBypass($: $T, id: string) {
   // Usa el reinicio del snapshot: desde un botón, leer el uso de la sesión puede no estar permitido.
   const snap = await read($, snapshot)
-  const t = await read($, test)
+  const t = await activeTest($)
   const l = t ? { resetsAt: t.resetsAt } : snap?.resetsAt ? { resetsAt: snap.resetsAt } : await limit($).catch(() => null)
   if (!l) return void $.ui.toast('Aún no hay dato del bloque de 5 h.')
   const list = snap?.sessions ?? []
@@ -446,12 +455,6 @@ async function toggleBypass($: $T, id: string) {
   if (CFG.maxBypass <= 0) return void $.ui.toast('Sin freno global está desactivado en Configuración.')
   if (active.length >= CFG.maxBypass) {
     return void $.ui.toast(`Ya ${active.length === 1 ? 'hay 1 sesión' : `hay ${active.length} sesiones`} sin freno: ${active.map(s => s.title).join(', ')}. Desactívala primero.`)
-  }
-  if ((await read($, armed)) !== id) {
-    await update($, armed, () => id)
-    $.ui.toast(`${title} podrá seguir pasado el ${CFG.brakeAt} % y agotar el bloque; las demás se frenarán. Se detiene en ${100 - CFG.closeMargin} % para cerrar ordenada. Toca ∞ de nuevo para confirmar.`)
-    $.clock.after(10000, () => void read($, armed).then(a => (a === id ? update($, armed, () => '') : undefined)))
-    return
   }
   await update($, armed, () => '')
   await $.store.set(bypassKey(id), l.resetsAt)
@@ -767,7 +770,6 @@ export const register: Register = on => {
 
     const cols = e.props.bodyColumns ?? 120
     const myBypass = !!snap.sessions.find(s => s.id === me)?.bypass
-    const armedId = await read($, armed)
     const bypassFull = snap.sessions.filter(s => s.bypass).length >= CFG.maxBypass
     const mode = cols >= 95 ? 'wide' : cols >= 65 ? 'mid' : 'narrow'
     const W = { wide: { head: 24, row: 16, name: 36, title: 34 }, mid: { head: 14, row: 10, name: 24, title: 22 }, narrow: { head: 8, row: 10, name: 0, title: 30 } }[mode]
@@ -843,7 +845,7 @@ export const register: Register = on => {
                 (s.cap === undefined || s.cap >= 100) && CFG.maxBypass > 0 && !s.bypass && bypassFull
                   ? <Box key={`up-${s.id}`}><Text dimColor>  ∞  </Text></Box>
                   : (s.cap === undefined || s.cap >= 100) && CFG.maxBypass > 0
-                  ? <Button key={`up-${s.id}`} label={s.bypass ? '∞ activo' : armedId === s.id ? '¿Seguro? ∞' : '∞'} dimColor={!s.bypass && bypassFull} variant={s.bypass ? 'primary' : undefined} onPress={() => void (s.bypass ? undefined : toggleBypass($, s.id))} />
+                  ? <Button key={`up-${s.id}`} label={s.bypass ? '∞ activo' : '∞'} dimColor={!s.bypass && bypassFull} variant={s.bypass ? 'primary' : undefined} onPress={() => void (s.bypass ? undefined : toggleBypass($, s.id))} />
                   : <Button key={`up-${s.id}`} label="+" onPress={() => void stepCap($, s.id, 1)} />,
                 <Button key={`p-${s.id}`} label={s.paused ? '▶' : '⏸'} onPress={() => void setPaused($, s.id, !s.paused)} />,
               ]
