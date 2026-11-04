@@ -422,9 +422,11 @@ async function setPaused($: $T, id: string, paused: boolean) {
 
 // Activa o quita el ∞ (sin freno global) de una sesión: hasta CFG.maxBypass a la vez, con un segundo toque para confirmar.
 async function toggleBypass($: $T, id: string) {
-  const l = await limit($)
-  if (!l) return
+  // Usa el reinicio del snapshot: desde un botón, leer el uso de la sesión puede no estar permitido.
   const snap = await read($, snapshot)
+  const t = await read($, test)
+  const l = t ? { resetsAt: t.resetsAt } : snap?.resetsAt ? { resetsAt: snap.resetsAt } : await limit($).catch(() => null)
+  if (!l) return void $.ui.toast('Aún no hay dato del bloque de 5 h.')
   const list = snap?.sessions ?? []
   const title = list.find(s => s.id === id)?.title ?? 'esta sesión'
   if ((await $.store.get(bypassKey(id))) === l.resetsAt) {
@@ -829,7 +831,7 @@ export const register: Register = on => {
               const bar = track(W.row, (s.pct / scale) * 100, 0, s.id === me && !s.paused, s.cap === undefined ? undefined : (s.cap / scale) * 100)
               const pct = (
                 <Text size="caption" tabular dimColor={s.id !== me} color={s.cap !== undefined && s.pct >= s.cap ? '#ef4444' : undefined}>
-                  {fmt(s.pct)} %{s.cap !== undefined ? ` / ${fmt(s.cap)} %` : ''}
+                  {fmt(s.pct)} %{s.bypass ? ' / ∞' : s.cap !== undefined ? ` / ${fmt(s.cap)} %` : ''}
                 </Text>
               )
               const buttons = [
