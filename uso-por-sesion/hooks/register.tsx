@@ -263,14 +263,31 @@ const sameBlock = (a: unknown, b: string | null | undefined) =>
 
 const fmt = (n: number) => (n < 10 ? n.toFixed(1) : Math.round(n).toString()).replace('.', ',')
 
+// Límites del bloque: los de esta sesión si ya recibió una respuesta; si no, los últimos que vio
+// cualquier sesión (así una sesión recién abierta muestra la franja y respeta el freno desde el inicio).
+type Limits = { five?: { percentUsed: number; resetsAt?: string }; week?: { percentUsed: number; resetsAt?: string } }
+const LAST_LIMITS_KEY = 'ultimo-limite'
+
+async function rateLimits($: $T): Promise<Limits> {
+  const live = (await $.session.usage()).rateLimits
+  const five = live.find(r => r.kind === 'five_hour')
+  const week = live.find(r => r.kind === 'seven_day')
+  if (five) {
+    const saved = (await $.store.get(LAST_LIMITS_KEY)) as Limits | undefined
+    const isNewer = !saved?.five?.resetsAt || !five.resetsAt || Date.parse(five.resetsAt) >= Date.parse(saved.five.resetsAt) - 30 * 60000
+    if (isNewer) await $.store.set(LAST_LIMITS_KEY, { five, week })
+    return { five, week }
+  }
+  const saved = (await $.store.get(LAST_LIMITS_KEY)) as Limits | undefined
+  return saved ?? {}
+}
+
 async function refresh($: $T) {
-  const usage = await $.session.usage()
-  const five = usage.rateLimits.find(r => r.kind === 'five_hour')
+  const { five, week } = await rateLimits($)
   if (!five) {
-    await update($, status, () => `Sin dato de 5 h aún (${usage.rateLimits.map(r => r.kind).join(', ') || 'vacío'})`)
+    await update($, status, () => 'Sin dato del bloque de 5 h aún: aparece con tu primer mensaje.')
     return
   }
-  const week = usage.rateLimits.find(r => r.kind === 'seven_day')
   const now = await $.clock.now()
   if (five.resetsAt && Date.parse(five.resetsAt) <= now) {
     const prev = await read($, snapshot)
@@ -386,7 +403,7 @@ async function activeTest($: $T) {
 async function limit($: $T) {
   const t = await activeTest($)
   if (t) return { pct: t.pct, resetsAt: t.resetsAt }
-  const five = (await $.session.usage()).rateLimits.find(r => r.kind === 'five_hour')
+  const { five } = await rateLimits($)
   return five?.resetsAt ? { pct: five.percentUsed, resetsAt: five.resetsAt } : null
 }
 
