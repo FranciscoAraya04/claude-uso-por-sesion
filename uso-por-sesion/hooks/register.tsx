@@ -262,30 +262,52 @@ function historyChart(list: Bucket[], width: number, showBrake: boolean) {
   return out + '</svg>'
 }
 
-// Línea del uso semanal, un punto por bloque.
-function weeklyChart(list: HistoryBlock[], width: number) {
-  const h = 130, top = 10, bottom = 22, left = 30, plot = h - top - bottom
-  const pts = list.map((b, i) => ({ i, v: b.weekly })).filter((p): p is { i: number; v: number } => p.v !== null)
-  const step = (width - left - 8) / Math.max(1, list.length - 1)
-  const x = (i: number) => left + i * step
+// Uso semanal en su periodo real (del inicio al reinicio semanal), con días marcados y
+// la proyección lineal al ritmo actual; hit = cuándo llegaría al 100 % antes del reinicio.
+function weeklyChart(list: HistoryBlock[], width: number, endIso: string, now: number, current: number | null): { svg: string; hit: number | null } {
+  const h = 130, top = 10, bottom = 22, left = 30, right = 8, plot = h - top - bottom
+  const end = Date.parse(endIso), start = end - SEVEN_DAYS
+  const x = (t: number) => left + ((Math.min(end, Math.max(start, t)) - start) / SEVEN_DAYS) * (width - left - right)
   const y = (pct: number) => top + plot - (Math.min(100, pct) / 100) * plot
+  const pts = list
+    .filter(b => b.weekly !== null && Date.parse(b.resetsAt) > start)
+    .map(b => ({ t: Math.min(now, Date.parse(b.resetsAt)), v: b.weekly! }))
+  if (current !== null) pts.push({ t: now, v: current })
+  pts.sort((a, b) => a.t - b.t)
   let out = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${h}" viewBox="0 0 ${width} ${h}" font-family="sans-serif" font-size="10">`
   for (const g of [0, 50, 100]) {
-    out += `<line x1="${left}" x2="${width - 4}" y1="${y(g)}" y2="${y(g)}" stroke="#3a3936" stroke-width="1"/><text x="${left - 4}" y="${y(g) + 3}" fill="#8f8d85" text-anchor="end">${g}</text>`
+    out += `<line x1="${left}" x2="${width - right}" y1="${y(g)}" y2="${y(g)}" stroke="#3a3936" stroke-width="1"/><text x="${left - 4}" y="${y(g) + 3}" fill="#8f8d85" text-anchor="end">${g}</text>`
   }
-  list.forEach((b, i) => {
-    if (i > 0 && dayKey(b.resetsAt) === dayKey(list[i - 1]!.resetsAt)) return
-    const sx = i === 0 ? x(0) : (x(i - 1) + x(i)) / 2
-    if (i > 0) out += `<line x1="${sx.toFixed(1)}" x2="${sx.toFixed(1)}" y1="${top}" y2="${h - bottom + 4}" stroke="#55534e" stroke-width="1" stroke-dasharray="2 3"/>`
-    out += `<text x="${(sx + 3).toFixed(1)}" y="${h - 6}" fill="#c8c6bd">${esc(dayName(b.resetsAt))}</text>`
-  })
+  // Medianoches dentro del periodo: separador y nombre del día que empieza.
+  const d = new Date(start)
+  d.setHours(24, 0, 0, 0)
+  out += `<text x="${left + 2}" y="${h - 6}" fill="#c8c6bd">${esc(dayName(new Date(start).toISOString()))}</text>`
+  for (; d.getTime() < end; d.setDate(d.getDate() + 1)) {
+    const sx = x(d.getTime()).toFixed(1)
+    out += `<line x1="${sx}" x2="${sx}" y1="${top}" y2="${h - bottom + 4}" stroke="#55534e" stroke-width="1" stroke-dasharray="2 3"/>`
+    if (x(d.getTime()) < width - right - 24) out += `<text x="${(+sx + 3).toFixed(1)}" y="${h - 6}" fill="#c8c6bd">${esc(dayName(d.toISOString()))}</text>`
+  }
+  const nx = x(now).toFixed(1)
+  out += `<line x1="${nx}" x2="${nx}" y1="${top}" y2="${h - bottom}" stroke="#8f8d85" stroke-width="1"/>`
+  let hit: number | null = null
+  const last = pts[pts.length - 1]
+  if (last && last.t > start && last.v > 0) {
+    // Proyección: ritmo medio desde el inicio del periodo semanal.
+    const rate = last.v / (last.t - start)
+    const t100 = start + 100 / rate
+    hit = t100 < end ? t100 : null
+    const tEnd = Math.min(end, t100)
+    out += `<line x1="${x(last.t).toFixed(1)}" y1="${y(last.v).toFixed(1)}" x2="${x(tEnd).toFixed(1)}" y2="${y(rate * (tEnd - start)).toFixed(1)}" stroke="#a855f7" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.8"/>`
+    if (hit !== null) out += `<circle cx="${x(hit).toFixed(1)}" cy="${y(100).toFixed(1)}" r="4" fill="none" stroke="#ef4444" stroke-width="2"/>`
+    else out += `<text x="${width - right - 2}" y="${(y(rate * (end - start)) - 5).toFixed(1)}" fill="#c8c6bd" text-anchor="end" font-size="9">${fmt(rate * (end - start))} %</text>`
+  }
   if (pts.length) {
-    const path = pts.map((p, k) => `${k ? 'L' : 'M'}${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')
-    out += `<path d="${path} L${x(pts[pts.length - 1]!.i).toFixed(1)},${y(0)} L${x(pts[0]!.i).toFixed(1)},${y(0)} Z" fill="#a855f7" opacity="0.15"/>`
+    const path = [{ t: start, v: 0 }, ...pts].map((p, k) => `${k ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')
+    out += `<path d="${path} L${x(last!.t).toFixed(1)},${y(0)} Z" fill="#a855f7" opacity="0.15"/>`
     out += `<path d="${path}" fill="none" stroke="#a855f7" stroke-width="2"/>`
-    for (const p of pts) out += `<circle cx="${x(p.i).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="3" fill="#a855f7"><title>${shortDay(list[p.i]!.resetsAt)} · semanal ${fmt(p.v)} %</title></circle>`
+    for (const p of pts) out += `<circle cx="${x(p.t).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="2.5" fill="#a855f7"/>`
   }
-  return out + '</svg>'
+  return { svg: out + '</svg>', hit }
 }
 
 const leftShort = (iso: string | null, now: number) => left(iso, now).replace(' min', ' m')
@@ -804,6 +826,10 @@ export const register: Register = on => {
     const byBlock = perSession && group === 'bloque'
     const titles = [...new Set(all.filter(b => Date.now() - Date.parse(b.resetsAt) < 31 * 86400e3).flatMap(b => b.top.map(t => t.title)))]
     const width = Math.max(260, Math.min(900, (e.props.bodyColumns ?? 60) * 8))
+    const snapNow = await read($, snapshot)
+    const weekly = snapNow?.weeklyResetsAt
+      ? { ...weeklyChart(all.slice().reverse(), width, snapNow.weeklyResetsAt, Date.now(), snapNow.weekly), end: snapNow.weeklyResetsAt }
+      : null
     const ranges = [
       { value: 'semana', label: 'Última semana' },
       { value: 'mes', label: 'Último mes' },
@@ -831,10 +857,11 @@ export const register: Register = on => {
           <Box flexDirection="column" gap="sm">
             <Text size="caption" weight="medium">{unit}</Text>
             <Svg source={historyChart(buckets, width, byBlock)} alt="Uso en el periodo" width={width} height={222} isInteractive />
-            {range === 'semana' && (
+            {range === 'semana' && weekly && (
               <Box flexDirection="column" gap="sm">
-                <Text size="caption" weight="medium">{group === 'dia' ? 'Semanal · % acumulado al cierre de cada día' : 'Semanal · % acumulado por ventana de 5 h'}</Text>
-                <Svg source={weeklyChart(all.filter(b => Date.now() - Date.parse(b.resetsAt) < 7 * 86400e3).reverse().filter((b, i, a) => group !== 'dia' || !a[i + 1] || dayKey(a[i + 1]!.resetsAt) !== dayKey(b.resetsAt)), width)} alt="Uso semanal en el tiempo" width={width} height={130} isInteractive />
+                <Text size="caption" weight="medium">Semanal · del inicio al reinicio del periodo</Text>
+                <Svg source={weekly.svg} alt="Uso semanal en el tiempo" width={width} height={130} isInteractive />
+                <Text size="caption" dimColor>{weekly.hit !== null ? `A este ritmo llegas al 100 % el ${dayName(new Date(weekly.hit).toISOString())} a las ${hhmm(new Date(weekly.hit).toISOString())}, antes del reinicio (${dayName(weekly.end)} ${hhmm(weekly.end)}).` : `A este ritmo no llegas al 100 % antes del reinicio (${dayName(weekly.end)} ${hhmm(weekly.end)}).`} Línea punteada: proyección lineal; raya gris: ahora.</Text>
               </Box>
             )}
             {byBlock && <Text size="caption" dimColor>Cada barra es una ventana de 5 h, rotulada con la hora en que se reinició; las líneas punteadas separan los días. Línea roja: freno del {CFG.brakeAt} %.</Text>}
