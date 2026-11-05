@@ -5,5 +5,10 @@
   "license": "MIT",
   "author": {
     "name": "FranciscoAraya04"
-  }
+  },
+  "homepage": "https://github.com/FranciscoAraya04/claude-uso-por-sesion",
+  "repository": "https://github.com/FranciscoAraya04/claude-uso-por-sesion",
+  "documentationUrl": "https://github.com/FranciscoAraya04/claude-uso-por-sesion/blob/main/uso-por-sesion/README.md",
+  "supportUrl": "https://github.com/FranciscoAraya04/claude-uso-por-sesion/issues",
+  "privacyPolicyUrl": "https://github.com/FranciscoAraya04/claude-uso-por-sesion/blob/main/uso-por-sesion/README.md#privacy-and-permissions"
 }
