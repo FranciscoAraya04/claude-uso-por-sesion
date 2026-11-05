@@ -833,8 +833,8 @@ export const register: Register = on => {
             <Svg source={historyChart(buckets, width, byBlock)} alt="Uso en el periodo" width={width} height={222} isInteractive />
             {range === 'semana' && (
               <Box flexDirection="column" gap="sm">
-                <Text size="caption" weight="medium">Semanal · % acumulado</Text>
-                <Svg source={weeklyChart(all.filter(b => Date.now() - Date.parse(b.resetsAt) < 7 * 86400e3).reverse(), width)} alt="Uso semanal en el tiempo" width={width} height={130} isInteractive />
+                <Text size="caption" weight="medium">{group === 'dia' ? 'Semanal · % acumulado al cierre de cada día' : 'Semanal · % acumulado por ventana de 5 h'}</Text>
+                <Svg source={weeklyChart(all.filter(b => Date.now() - Date.parse(b.resetsAt) < 7 * 86400e3).reverse().filter((b, i, a) => group !== 'dia' || !a[i + 1] || dayKey(a[i + 1]!.resetsAt) !== dayKey(b.resetsAt)), width)} alt="Uso semanal en el tiempo" width={width} height={130} isInteractive />
               </Box>
             )}
             {byBlock && <Text size="caption" dimColor>Cada barra es una ventana de 5 h, rotulada con la hora en que se reinició; las líneas punteadas separan los días. Línea roja: freno del {CFG.brakeAt} %.</Text>}
