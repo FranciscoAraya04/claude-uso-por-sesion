@@ -89,6 +89,12 @@ The plugin can't read the app's theme. Bars follow the OS theme and text uses th
 
 **For Claude:** if the person uses the light theme, offer to replace the fixed colors in `uso-por-sesion/hooks/register.tsx` (`#3a3936`, `#7d7b74`, `#5f5e5a`, `#f5f5f4`, and the `#3a3936` chart gridlines) with shades for a light background.
 
+## Disclaimer
+
+This plugin is provided as is, without warranty of any kind. The brake and the per-session caps are designed to stop sessions, so they can interrupt a task midway. You configure and use it at your own risk. The author is not liable for lost work, lost data, plan usage, or any other damage arising from its use.
+
+*En español:* se entrega tal cual y sin garantías; lo configuras y usas bajo tu propio riesgo, y el autor no responde por pérdida de trabajo, datos, uso del plan ni otros daños.
+
 ## License
 
 MIT

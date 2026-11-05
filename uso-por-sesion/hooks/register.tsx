@@ -75,6 +75,7 @@ async function loadCfg($: { store: { get: (k: string) => Promise<unknown> } }) {
   return CFG
 }
 const APPROVED_KEY = 'freno-aprobado'
+const DISCLAIMER_KEY = 'aviso-visto'
 const RESUME_TEXT = (): Record<string, string> => ({
   freno: L('El bloque de 5 horas se restableció (freno de uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
     'The 5-hour block has reset (uso-por-sesion brake). Continue the task exactly where you left off.'),
@@ -716,6 +717,11 @@ export const register: Register = on => {
     const result = await next(e)
     // Primero la configuración: las descripciones salen en el idioma elegido.
     await loadCfg($)
+    // Aviso de responsabilidad: una sola vez por persona, sin bloquear nada.
+    if (!(await $.store.get(DISCLAIMER_KEY))) {
+      await $.store.set(DISCLAIMER_KEY, true)
+      $.ui.toast(L('Usar este mod implica aceptar su aviso de responsabilidad (README).', 'Using this mod means you accept its disclaimer (README).'))
+    }
     const anyHint = L('[n° | todas]', '[n | all]')
     const defs: { name: CmdName; description: string; argumentHint?: string }[] = [
       { name: 'uso', description: L('Muestra u oculta la franja de uso por sesión', 'Show or hide the per-session usage band') },
@@ -909,6 +915,7 @@ export const register: Register = on => {
           <Text size="caption" dimColor>{L('Verde holgado · amarillo justo · naranjo te pasas por menos de 1 h · rojo 1–2 h · morado 2–3 h · morado oscuro más. Desde rojo parpadea.', 'Green plenty of room · yellow tight · orange you run out less than 1 h early · red 1–2 h · purple 2–3 h · dark purple more. Blinks from red up.')}</Text>
           <Text size="caption" weight="medium">{L('Desglose', 'Breakdown')}</Text>
           <Text size="caption" dimColor>{L(`− / + cambian el tope de la sesión de a ${CFG.capStep} %; ⏸ / ▶ la pausan o reanudan; ∞ la deja sin freno global (nombre en color de Claude); la raya clara en la barra marca su tope.`, `− / + change the session's cap by ${CFG.capStep} %; ⏸ / ▶ pause or resume it; ∞ exempts it from the global brake (name in Claude's color); the light mark on the bar shows its cap.`)}</Text>
+          <Text size="caption" dimColor>{L('Se entrega tal cual, sin garantías; el freno y los topes pueden cortar tareas a la mitad. Ver "Disclaimer" en el README.', 'Provided as is, without warranty; the brake and caps can stop tasks midway. See "Disclaimer" in the README.')}</Text>
         </Box>
       )
     }
