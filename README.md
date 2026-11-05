@@ -12,7 +12,7 @@ The 5-hour limit only shows one total. If you run several sessions in parallel, 
 
 Everything is available in **English and Spanish** (⚙ Settings → Language).
 
-<!-- screenshot -->
+<p align="center"><img src="docs/demo.gif" alt="Usage per session band, per-session caps, the brake and the history panel" width="520"></p>
 
 ## Install
 
