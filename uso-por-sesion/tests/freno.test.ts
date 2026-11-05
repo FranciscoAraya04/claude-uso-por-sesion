@@ -4,7 +4,7 @@ const reset = () => new Date(Date.now() + 3600e3).toISOString()
 
 // Motor simulado: uso del bloque, id de sesión y un almacén compartido en memoria.
 const engine = (on: Parameters<Parameters<typeof test>[1]>[1], pct: number) => {
-  const store = new Map<string, unknown>()
+  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
   const resetsAt = reset()
   on('session.usage', () => ({
     value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: pct, resetsAt }] },
@@ -103,7 +103,7 @@ test('con datos, el historial dibuja gráficos', async ($, on) => {
 
 test('el freno respeta el % configurado', async ($, on) => {
   const { store } = engine(on, 84)
-  store.set('config', { brakeAt: 90 })
+  store.set('config', { lang: 'es', brakeAt: 90 })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: {} }))
   on('clock.every', () => ({ value: {} }))

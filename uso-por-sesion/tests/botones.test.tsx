@@ -6,7 +6,7 @@ const BAND = {
 } as const
 
 test('tocar ∞ lo activa y la fila cambia', async ($, on) => {
-  const store = new Map<string, unknown>()
+  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
   const resetsAt = new Date(Date.now() + 3600e3).toISOString()
   on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: 40, resetsAt }] } }))
   on('session.id', () => ({ value: 'yo' }))
@@ -31,7 +31,7 @@ test('tocar ∞ lo activa y la fila cambia', async ($, on) => {
 })
 
 test('con el máximo de ∞ activo, la otra fila se dibuja igual', async ($, on) => {
-  const store = new Map<string, unknown>()
+  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
   const resetsAt = new Date(Date.now() + 3600e3).toISOString()
   store.set('sinfreno:yo', resetsAt)
   on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: 40, resetsAt }] } }))
@@ -51,7 +51,7 @@ test('con el máximo de ∞ activo, la otra fila se dibuja igual', async ($, on)
 })
 
 test('el ∞ sigue activo aunque la hora de reinicio varíe unos segundos', async ($, on) => {
-  const store = new Map<string, unknown>()
+  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
   const base = Date.now() + 3600e3
   let n = 0
   on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: 40, resetsAt: new Date(base + (n++ % 3) * 1000).toISOString() }] } }))
@@ -75,7 +75,7 @@ test('el ∞ sigue activo aunque la hora de reinicio varíe unos segundos', asyn
 })
 
 test('con poco espacio la franja muestra las que caben y la pestaña Sesiones todas', async ($, on) => {
-  const store = new Map<string, unknown>()
+  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
   const resetsAt = new Date(Date.now() + 3600e3).toISOString()
   const sessions = Array.from({ length: 8 }, (_, i) => ({ id: `s${i}`, title: `Sesión ${i}`, w: 8 - i }))
   on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: 40, resetsAt }] } }))
@@ -104,7 +104,7 @@ test('con poco espacio la franja muestra las que caben y la pestaña Sesiones to
 })
 
 test('pasado el reinicio la franja muestra el bloque nuevo en 0', async ($, on) => {
-  const store = new Map<string, unknown>()
+  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
   const resetsAt = new Date(Date.now() - 60000).toISOString()
   on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: 52, resetsAt }] } }))
   on('session.id', () => ({ value: 'yo' }))
@@ -122,7 +122,7 @@ test('pasado el reinicio la franja muestra el bloque nuevo en 0', async ($, on) 
 })
 
 test('una sesión recién abierta usa los últimos límites guardados', async ($, on) => {
-  const store = new Map<string, unknown>()
+  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
   const resetsAt = new Date(Date.now() + 3600e3).toISOString()
   store.set('ultimo-limite', { five: { percentUsed: 47, resetsAt } })
   on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [] } }))

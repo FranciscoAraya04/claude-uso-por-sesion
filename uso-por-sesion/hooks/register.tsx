@@ -7,7 +7,7 @@ const snapshot = atom({ plugin: 'uso-por-sesion', key: 'snapshot' } as const, nu
 const isOpen = atom({ plugin: 'uso-por-sesion', key: 'isOpen' } as const, false)
 const isMin = atom({ plugin: 'uso-por-sesion', key: 'isMin' } as const, false)
 const nowMs = atom({ plugin: 'uso-por-sesion', key: 'nowMs' } as const, 0)
-const status = atom({ plugin: 'uso-por-sesion', key: 'status' } as const, 'Calculando uso…')
+const status = atom({ plugin: 'uso-por-sesion', key: 'status' } as const, '')
 
 const test = atom({ plugin: 'uso-por-sesion', key: 'test' } as const, null as BrakeTest | null)
 const resumeAt = atom({ plugin: 'uso-por-sesion', key: 'resumeAt' } as const, 0)
@@ -31,27 +31,63 @@ const FIVE_HOURS = 5 * 3600e3
 const CLAY = '#d97757'
 // Freno: al 83 % del bloque se detiene todo; el 2 % restante alcanza para cerrar ordenado.
 // Ajustes de cada persona, guardados en el almacén compartido; estos son los valores por defecto.
-const DEFAULTS = { brakeAt: 83, closeMargin: 2, marginMin: 2, defaultCap: 35, warnPct: 80, maxBypass: 1, capStep: 10 }
+type Lang = 'en' | 'es'
+// Idioma por defecto: español si el sistema está en español; si no, inglés.
+const sysLang = (): Lang => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().locale.toLowerCase().startsWith('es') ? 'es' : 'en'
+  } catch {
+    return 'en'
+  }
+}
+const NUM_DEFAULTS = { brakeAt: 83, closeMargin: 2, marginMin: 2, defaultCap: 35, warnPct: 80, maxBypass: 1, capStep: 10 }
+type NumKey = keyof typeof NUM_DEFAULTS
+const DEFAULTS: typeof NUM_DEFAULTS & { lang: Lang } = { ...NUM_DEFAULTS, lang: sysLang() }
 type Cfg = typeof DEFAULTS
 const CFG_KEY = 'config'
 let CFG: Cfg = { ...DEFAULTS }
 const resumeMargin = () => CFG.marginMin * 60000
+// Texto visible según el idioma elegido.
+const L = (es: string, en: string) => (CFG.lang === 'en' ? en : es)
+// Nombres en inglés de los comandos (mismo comportamiento que los /uso-…).
+const EN_CMD = {
+  'uso': 'session-usage',
+  'uso-limite': 'session-limit',
+  'uso-pausar': 'session-pause',
+  'uso-reanudar': 'session-resume',
+  'uso-continuar': 'session-continue',
+  'uso-sin-freno': 'session-no-brake',
+  'uso-config': 'session-config',
+  'uso-historial': 'session-history',
+  'uso-prueba-freno': 'session-brake-test',
+} as const
+type CmdName = keyof typeof EN_CMD
+// Comando tal como se le muestra a la persona, en su idioma.
+const C = (name: CmdName) => `/${CFG.lang === 'en' ? EN_CMD[name] : name}`
+const ALL_WORDS = ['todas', 'todos', 'all']
+const isAllArg = (a: string) => ALL_WORDS.includes(a.trim().toLowerCase())
 
 async function loadCfg($: { store: { get: (k: string) => Promise<unknown> } }) {
   const raw = await $.store.get(CFG_KEY)
-  CFG = { ...DEFAULTS, ...(raw && typeof raw === 'object' ? (raw as Partial<Cfg>) : {}) }
+  const saved = raw && typeof raw === 'object' ? (raw as Partial<Cfg>) : {}
+  CFG = { ...DEFAULTS, ...saved }
+  if (CFG.lang !== 'en' && CFG.lang !== 'es') CFG.lang = DEFAULTS.lang
   return CFG
 }
 const APPROVED_KEY = 'freno-aprobado'
-const RESUME_TEXT: Record<string, string> = {
-  freno: 'El bloque de 5 horas se restableció (freno de uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
-  tope: 'El bloque de 5 horas se restableció o se liberó el tope de esta sesión (uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
-  pausa: 'Esta sesión fue reanudada (uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
-}
+const RESUME_TEXT = (): Record<string, string> => ({
+  freno: L('El bloque de 5 horas se restableció (freno de uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
+    'The 5-hour block has reset (uso-por-sesion brake). Continue the task exactly where you left off.'),
+  tope: L('El bloque de 5 horas se restableció o se liberó el tope de esta sesión (uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
+    "The 5-hour block has reset or this session's cap was released (uso-por-sesion). Continue the task exactly where you left off."),
+  pausa: L('Esta sesión fue reanudada (uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
+    'This session was resumed (uso-por-sesion). Continue the task exactly where you left off.'),
+})
 const capKey = (id: string) => `tope:${id}`
 // Tope por defecto de toda sesión; 0 guardado = sin tope.
 const HISTORY_KEY = 'historial'
 const HISTORY_PANE = 'uso-config'
+const paneTitle = () => L('Uso por sesión', 'Usage per session')
 const SEVEN_DAYS = 7 * 24 * 3600e3
 
 async function capOf($: { store: { get: (k: string) => Promise<unknown> } }, id: string) {
@@ -131,13 +167,15 @@ const colorOf = (title: string) => {
 const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const shortDay = (iso: string) => {
   const d = new Date(iso)
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`
+  const dd = String(d.getDate()).padStart(2, '0'), mm = String(d.getMonth() + 1).padStart(2, '0')
+  return CFG.lang === 'en' ? `${mm}/${dd}` : `${dd}/${mm}`
 }
 
-const DOW = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb']
+const DOW_ES = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb']
+const DOW_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const dayName = (iso: string) => {
   const d = new Date(iso)
-  return `${DOW[d.getDay()]} ${d.getDate()}`
+  return `${(CFG.lang === 'en' ? DOW_EN : DOW_ES)[d.getDay()]} ${d.getDate()}`
 }
 const dayKey = (iso: string) => {
   const d = new Date(iso)
@@ -158,7 +196,7 @@ function bucketize(all: HistoryBlock[], range: string, who: string, group = ''):
   const byBlock = range === 'semana' ? group !== 'dia' : range === 'mes' && group === 'bloque'
   if (byBlock) {
     return {
-      unit: who ? `Ventanas de 5 h · % del límite usado por ${who}` : 'Ventanas de 5 h · % del límite',
+      unit: who ? L(`Ventanas de 5 h · % del límite usado por ${who}`, `5-hour windows · % of limit used by ${who}`) : L('Ventanas de 5 h · % del límite', '5-hour windows · % of limit'),
       buckets: list.map(b => ({
         label: hhmm(b.resetsAt),
         day: dayName(b.resetsAt),
@@ -178,12 +216,14 @@ function bucketize(all: HistoryBlock[], range: string, who: string, group = ''):
     }
     return `${d.getFullYear()}-${d.getMonth()}`
   }
-  const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+  const MONTHS = CFG.lang === 'en'
+    ? ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    : ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
   const groups = new Map<string, Bucket>()
   for (const b of list) {
     const k = keyOf(b.resetsAt)
     const d = new Date(b.resetsAt)
-    const label = range === 'todo' ? `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}` : range === 'año' ? `sem ${shortDay(b.resetsAt)}` : dayName(b.resetsAt)
+    const label = range === 'todo' ? `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}` : range === 'año' ? `${L('sem', 'wk')} ${shortDay(b.resetsAt)}` : dayName(b.resetsAt)
     const g = groups.get(k) ?? { label, tip: '', total: 0, parts: [] }
     g.total += value(b)
     if (range === 'mes' || range === 'semana') {
@@ -198,10 +238,10 @@ function bucketize(all: HistoryBlock[], range: string, who: string, group = ''):
   const buckets = [...groups.values()].map(g => ({
     ...g,
     parts: g.parts.sort((a, b) => b.pct - a.pct).slice(0, 5),
-    tip: `${g.label} · ${fmt(g.total)} % de bloque (≈ ${fmt(g.total / 100)} bloques)`,
+    tip: L(`${g.label} · ${fmt(g.total)} % de bloque (≈ ${fmt(g.total / 100)} bloques)`, `${g.label} · ${fmt(g.total)} % of block (≈ ${fmt(g.total / 100)} blocks)`),
   }))
-  const per = range === 'mes' || range === 'semana' ? 'día' : range === 'año' ? 'semana' : 'mes'
-  return { unit: `Uso por ${per} · suma de % de bloque${who ? ` de ${who}` : ''}`, buckets }
+  const per = range === 'mes' || range === 'semana' ? L('día', 'day') : range === 'año' ? L('semana', 'week') : L('mes', 'month')
+  return { unit: L(`Uso por ${per} · suma de % de bloque${who ? ` de ${who}` : ''}`, `Usage per ${per} · sum of block %${who ? ` for ${who}` : ''}`), buckets }
 }
 
 // Barras apiladas: cada sesión con su color, el resto en gris; con freno, línea al 83 %.
@@ -316,7 +356,10 @@ const leftShort = (iso: string | null, now: number) => left(iso, now).replace(' 
 const sameBlock = (a: unknown, b: string | null | undefined) =>
   typeof a === 'string' && !!b && Math.abs(Date.parse(a) - Date.parse(b)) < 30 * 60000
 
-const fmt = (n: number) => (n < 10 ? n.toFixed(1) : Math.round(n).toString()).replace('.', ',')
+const fmt = (n: number) => {
+  const t = n < 10 ? n.toFixed(1) : Math.round(n).toString()
+  return CFG.lang === 'en' ? t : t.replace('.', ',')
+}
 
 // Límites del bloque: los de esta sesión si ya recibió una respuesta; si no, los últimos que vio
 // cualquier sesión (así una sesión recién abierta muestra la franja y respeta el freno desde el inicio).
@@ -340,7 +383,7 @@ async function rateLimits($: $T): Promise<Limits> {
 async function refresh($: $T) {
   const { five, week } = await rateLimits($)
   if (!five) {
-    await update($, status, () => 'Sin dato del bloque de 5 h aún: aparece con tu primer mensaje.')
+    await update($, status, () => L('Sin dato del bloque de 5 h aún: aparece con tu primer mensaje.', 'No 5-hour block data yet: it appears with your first message.'))
     return
   }
   const now = await $.clock.now()
@@ -363,7 +406,7 @@ async function refresh($: $T) {
     { timeoutMs: 60000 },
   )
   if (exitCode !== 0) {
-    await update($, status, () => `Error al leer registros: ${stderr.slice(0, 120)}`)
+    await update($, status, () => L(`Error al leer registros: ${stderr.slice(0, 120)}`, `Error reading logs: ${stderr.slice(0, 120)}`))
     return
   }
   const { sessions } = JSON.parse(stdout) as { sessions: { id: string; title: string | null; w: number }[] }
@@ -383,7 +426,7 @@ async function refresh($: $T) {
     pct: (s.w / total) * five.percentUsed,
     ...(await extra(s.id)),
   })))
-  if (!shares.some(s => s.id === me)) shares.push({ id: me, title: 'Esta sesión', pct: 0, ...(await extra(me)) })
+  if (!shares.some(s => s.id === me)) shares.push({ id: me, title: L('Esta sesión', 'This session'), pct: 0, ...(await extra(me)) })
   const next: Snapshot = {
     fiveHour: five.percentUsed,
     resetsAt: five.resetsAt ?? null,
@@ -422,7 +465,7 @@ async function warnNearCap($: $T, snap: Snapshot) {
   if (cap === undefined || !snap.resetsAt || snap.current < cap * (CFG.warnPct / 100)) return
   if (sameBlock(await read($, warnedFor), snap.resetsAt)) return
   await update($, warnedFor, () => snap.resetsAt!)
-  $.ui.toast(`Esta sesión va en ${fmt(snap.current)} % del bloque: cerca de su tope de ${fmt(cap)} %.`)
+  $.ui.toast(L(`Esta sesión va en ${fmt(snap.current)} % del bloque: cerca de su tope de ${fmt(cap)} %.`, `This session is at ${fmt(snap.current)} % of the block: close to its ${fmt(cap)} % cap.`))
 }
 
 // Sube o baja el tope de una sesión de a 10 %; bajo 10 queda sin tope.
@@ -466,24 +509,27 @@ async function limit($: $T) {
 async function stopReason($: $T): Promise<{ kind: string; text: string } | null> {
   const me = await $.session.id()
   if (await $.store.get(pauseKey(me))) {
-    return { kind: 'pausa', text: 'Sesión pausada con /uso-pausar. Se reanuda con /uso-reanudar.' }
+    return { kind: 'pausa', text: L(`Sesión pausada con ${C('uso-pausar')}. Se reanuda con ${C('uso-reanudar')}.`, `Session paused with ${C('uso-pausar')}. Resume it with ${C('uso-reanudar')}.`) }
   }
   const l = await limit($)
   if (!l || Date.parse(l.resetsAt) + resumeMargin() <= Date.now()) return null
   const resumeAt = hhmm(new Date(Date.parse(l.resetsAt) + resumeMargin()).toISOString())
   const bypass = sameBlock(await $.store.get(bypassKey(me)), l.resetsAt)
   if (bypass && l.pct >= 100 - CFG.closeMargin) {
-    return { kind: 'freno', text: `Límite real cerca: el bloque de 5 h va en ${fmt(l.pct)} % y esta sesión (sin freno global) se detiene antes del corte de Anthropic. Se reanuda sola a las ${resumeAt}.` }
+    return { kind: 'freno', text: L(`Límite real cerca: el bloque de 5 h va en ${fmt(l.pct)} % y esta sesión (sin freno global) se detiene antes del corte de Anthropic. Se reanuda sola a las ${resumeAt}.`,
+      `Real limit close: the 5-hour block is at ${fmt(l.pct)} % and this session (no global brake) stops before Anthropic's cutoff. It resumes on its own at ${resumeAt}.`) }
   }
   const brakeOk = bypass || sameBlock(await $.store.get(APPROVED_KEY), l.resetsAt) || sameBlock(await $.store.get(brakeOkKey(me)), l.resetsAt)
   if (l.pct >= CFG.brakeAt && !brakeOk) {
     const free = ((await read($, snapshot))?.sessions ?? []).filter(s => s.bypass).map(s => s.title)
-    return { kind: 'freno', text: `Freno de uso: el bloque de 5 h va en ${fmt(l.pct)} % (freno ${CFG.brakeAt} %).${free.length ? ` Sigue sin freno: ${free.join(', ')}.` : ''} Se reanuda sola a las ${resumeAt}; /uso-continuar la libera antes.` }
+    return { kind: 'freno', text: L(`Freno de uso: el bloque de 5 h va en ${fmt(l.pct)} % (freno ${CFG.brakeAt} %).${free.length ? ` Sigue sin freno: ${free.join(', ')}.` : ''} Se reanuda sola a las ${resumeAt}; ${C('uso-continuar')} la libera antes.`,
+      `Usage brake: the 5-hour block is at ${fmt(l.pct)} % (brake ${CFG.brakeAt} %).${free.length ? ` Still without brake: ${free.join(', ')}.` : ''} It resumes on its own at ${resumeAt}; ${C('uso-continuar')} releases it sooner.`) }
   }
   const cap = await capOf($, me)
   const mine = (await read($, snapshot))?.current ?? 0
   if (cap !== undefined && mine >= Math.max(0, cap - CFG.closeMargin) && !sameBlock(await $.store.get(capOkKey(me)), l.resetsAt)) {
-    return { kind: 'tope', text: `Tope de esta sesión: lleva ${fmt(mine)} % del bloque de 5 h (tope ${fmt(cap)} %). Se reanuda sola tras el reinicio; /uso-continuar la libera antes.` }
+    return { kind: 'tope', text: L(`Tope de esta sesión: lleva ${fmt(mine)} % del bloque de 5 h (tope ${fmt(cap)} %). Se reanuda sola tras el reinicio; ${C('uso-continuar')} la libera antes.`,
+      `This session's cap: it has used ${fmt(mine)} % of the 5-hour block (cap ${fmt(cap)} %). It resumes on its own after the reset; ${C('uso-continuar')} releases it sooner.`) }
   }
   return null
 }
@@ -504,7 +550,7 @@ async function maybeResume($: $T) {
   if (!was || (await syncStop($))) return
   await update($, stoppedBy, () => '')
   await update($, test, () => null)
-  await $.prompt.submit({ text: RESUME_TEXT[was] ?? RESUME_TEXT.pausa! })
+  await $.prompt.submit({ text: RESUME_TEXT()[was] ?? RESUME_TEXT().pausa! })
 }
 
 // Pausa o reanuda una sesión desde los botones del desglose.
@@ -523,22 +569,23 @@ async function toggleBypass($: $T, id: string) {
   const snap = await read($, snapshot)
   const t = await activeTest($)
   const l = t ? { resetsAt: t.resetsAt } : snap?.resetsAt ? { resetsAt: snap.resetsAt } : await limit($).catch(() => null)
-  if (!l) return void $.ui.toast('Aún no hay dato del bloque de 5 h.')
+  if (!l) return void $.ui.toast(L('Aún no hay dato del bloque de 5 h.', 'No 5-hour block data yet.'))
   const list = snap?.sessions ?? []
-  const title = list.find(s => s.id === id)?.title ?? 'esta sesión'
+  const title = list.find(s => s.id === id)?.title ?? L('esta sesión', 'this session')
   if (sameBlock(await $.store.get(bypassKey(id)), l.resetsAt)) {
     await $.store.delete(bypassKey(id))
     await update($, armed, () => '')
     await patchRow($, id, s => ({ ...s, bypass: false }))
     void refresh($).catch(() => {})
     await syncStop($)
-    $.ui.toast(`${title} vuelve a respetar el freno global.`)
+    $.ui.toast(L(`${title} vuelve a respetar el freno global.`, `${title} respects the global brake again.`))
     return
   }
   const active = list.filter(s => s.bypass && s.id !== id)
-  if (CFG.maxBypass <= 0) return void $.ui.toast('Sin freno global está desactivado en Configuración.')
+  if (CFG.maxBypass <= 0) return void $.ui.toast(L('Sin freno global está desactivado en Configuración.', 'No global brake is turned off in Settings.'))
   if (active.length >= CFG.maxBypass) {
-    return void $.ui.toast(`Ya ${active.length === 1 ? 'hay 1 sesión' : `hay ${active.length} sesiones`} sin freno: ${active.map(s => s.title).join(', ')}. Desactívala primero.`)
+    return void $.ui.toast(L(`Ya ${active.length === 1 ? 'hay 1 sesión' : `hay ${active.length} sesiones`} sin freno: ${active.map(s => s.title).join(', ')}. Desactívala primero.`,
+      `${active.length === 1 ? '1 session is' : `${active.length} sessions are`} already without brake: ${active.map(s => s.title).join(', ')}. Turn it off first.`))
   }
   await update($, armed, () => '')
   await $.store.set(bypassKey(id), l.resetsAt)
@@ -546,7 +593,7 @@ async function toggleBypass($: $T, id: string) {
   void refresh($).catch(() => {})
   await syncStop($)
   await maybeResume($)
-  $.ui.toast(`${title} queda sin freno global hasta el reinicio de las ${hhmm(l.resetsAt)}.`)
+  $.ui.toast(L(`${title} queda sin freno global hasta el reinicio de las ${hhmm(l.resetsAt)}.`, `${title} ignores the global brake until the ${hhmm(l.resetsAt)} reset.`))
 }
 
 // Sesiones de la última lista del desglose: un número (1, 2…), "todas" o vacío (esta sesión).
@@ -554,26 +601,137 @@ async function targets($: $T, arg: string) {
   const me = await $.session.id()
   const list = (await read($, snapshot))?.sessions ?? []
   const a = arg.trim().toLowerCase()
-  if (!a) return [{ id: me, title: 'esta sesión' }]
-  if (a === 'todas') return list.map(s => ({ id: s.id, title: s.title }))
+  if (!a) return [{ id: me, title: L('esta sesión', 'this session') }]
+  if (isAllArg(a)) return list.map(s => ({ id: s.id, title: s.title }))
   const n = Number(a)
   const s = list[n - 1]
   return Number.isInteger(n) && s ? [{ id: s.id, title: s.title }] : []
 }
 
+// Handlers de comandos: cada uno se registra con su nombre en español y su alias en inglés.
+const notFound = () => L('No encontré esa sesión. Usa el n° del desglose, "todas" o nada para esta sesión.', 'Session not found. Use the number from the list, "all", or nothing for this session.')
+
+const cmdUsoContinuar: Hook<'command.run'> = async ($, e) => {
+  const l = await limit($)
+  if (!l) return { text: L('Aún no hay dato del bloque de 5 h.', 'No 5-hour block data yet.') }
+  const isAll = isAllArg(e.args)
+  const list = await targets($, e.args)
+  if (!list.length) return { text: notFound() }
+  if (isAll) await $.store.set(APPROVED_KEY, l.resetsAt)
+  for (const t of list) {
+    await $.store.set(brakeOkKey(t.id), l.resetsAt)
+    await $.store.set(capOkKey(t.id), l.resetsAt)
+  }
+  await maybeResume($)
+  await syncStop($)
+  const who = isAll ? L('todas las sesiones', 'all sessions') : list.map(t => t.title).join(', ')
+  return { text: L(`Freno y tope liberados para ${who} hasta el reinicio de las ${hhmm(l.resetsAt)}.`, `Brake and cap released for ${who} until the ${hhmm(l.resetsAt)} reset.`) }
+}
+
+const cmdUsoLimite: Hook<'command.run'> = async ($, e) => {
+  const me = await $.session.id()
+  const a = e.args.trim().toLowerCase().replace('%', '').replace(',', '.')
+  if (!a) {
+    const cap = await capOf($, me)
+    const c = C('uso-limite')
+    return { text: (cap !== undefined
+      ? L(`Tope de esta sesión: ${fmt(cap)} % del bloque de 5 h. Cámbialo con ${c} <n> o quítalo con ${c} quitar.`, `This session's cap: ${fmt(cap)} % of the 5-hour block. Change it with ${c} <n> or remove it with ${c} remove.`)
+      : L(`Esta sesión no tiene tope. Ponle uno con ${c} <n>, por ejemplo ${c} 20.`, `This session has no cap. Set one with ${c} <n>, for example ${c} 20.`)) }
+  }
+  if (a === 'quitar' || a === 'remove' || a === 'off') {
+    await $.store.set(capKey(me), 0)
+    await refresh($).catch(() => {})
+    return { text: L('Tope de esta sesión quitado.', "This session's cap removed.") }
+  }
+  const n = Number(a)
+  if (!(n > 0 && n <= 100)) return { text: L(`Uso: ${C('uso-limite')} 40 (porcentaje del bloque de 5 h) o ${C('uso-limite')} quitar.`, `Usage: ${C('uso-limite')} 40 (percent of the 5-hour block) or ${C('uso-limite')} remove.`) }
+  await $.store.set(capKey(me), n)
+  await $.store.delete(capOkKey(me))
+  await refresh($).catch(() => {})
+  return { text: L(`Tope de esta sesión: ${fmt(n)} % del bloque de 5 h.`, `This session's cap: ${fmt(n)} % of the 5-hour block.`) }
+}
+
+const cmdUsoPausar: Hook<'command.run'> = async ($, e) => {
+  const list = await targets($, e.args)
+  if (!list.length) return { text: notFound() }
+  for (const t of list) await $.store.set(pauseKey(t.id), true)
+  await refresh($).catch(() => {})
+  await syncStop($)
+  return { text: L(`Pausada(s): ${list.map(t => t.title).join(', ')}. Se detienen en su próximo paso.`, `Paused: ${list.map(t => t.title).join(', ')}. They stop at their next step.`) }
+}
+
+const cmdUsoReanudar: Hook<'command.run'> = async ($, e) => {
+  const list = await targets($, e.args)
+  if (!list.length) return { text: notFound() }
+  for (const t of list) await $.store.delete(pauseKey(t.id))
+  await refresh($).catch(() => {})
+  await maybeResume($)
+  await syncStop($)
+  return { text: L(`Reanudada(s): ${list.map(t => t.title).join(', ')}. Las que estaban trabajando retoman en menos de un minuto.`, `Resumed: ${list.map(t => t.title).join(', ')}. Those that were working pick up again in under a minute.`) }
+}
+
+const cmdUsoPruebaFreno: Hook<'command.run'> = async $ => {
+  if (await read($, test)) {
+    await update($, test, () => null)
+    await update($, stoppedBy, () => '')
+    await syncStop($)
+    return { text: L('Prueba del freno terminada.', 'Brake test ended.') }
+  }
+  const resetsAt = new Date(Date.now() + 60000).toISOString()
+  await update($, test, () => ({ pct: 84, resetsAt }))
+  await syncStop($)
+  return { text: L('Prueba del freno activa solo en esta sesión: simula 84 % con reinicio en 1 min (reanuda en ~3 min). Pídele a Claude que haga algo para ver el freno.',
+    'Brake test active in this session only: simulates 84 % with a reset in 1 min (resumes in ~3 min). Ask Claude to do something to see the brake.') }
+}
+
+const cmdUsoSinFreno: Hook<'command.run'> = async ($, e) => {
+  if (isAllArg(e.args)) return { text: L('El ∞ se activa de a una sesión.', '∞ is turned on one session at a time.') }
+  const t = (await targets($, e.args))[0]
+  if (!t) return { text: L('No encontré esa sesión. Usa el n° del desglose o nada para esta sesión.', 'Session not found. Use the number from the list or nothing for this session.') }
+  await update($, armed, () => t.id)
+  await toggleBypass($, t.id)
+  return { text: L('Listo. Revisa el aviso para ver el resultado.', 'Done. Check the notice to see the result.') }
+}
+
+const cmdUsoConfig: Hook<'command.run'> = async $ => {
+  await update($, cfgTab, () => 'ajustes')
+  await $.ui.open({ id: HISTORY_PANE, title: paneTitle() })
+  return { text: L('Configuración abierta.', 'Settings opened.') }
+}
+
+const cmdUsoHistorial: Hook<'command.run'> = async $ => {
+  await update($, cfgTab, () => 'historial')
+  await $.ui.open({ id: HISTORY_PANE, title: paneTitle() })
+  return { text: L('Historial de uso abierto.', 'Usage history opened.') }
+}
+
+const cmdUso: Hook<'command.run'> = async $ => {
+  const hidden = !(await read($, isMin))
+  await update($, isMin, () => hidden)
+  return { text: hidden ? L(`Franja de uso oculta. Escribe ${C('uso')} para volver a mostrarla.`, `Usage band hidden. Type ${C('uso')} to show it again.`) : L('Franja de uso visible.', 'Usage band visible.') }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
-    await $.command.register({ name: 'uso', description: 'Muestra u oculta la franja de uso por sesión' })
-    await $.command.register({ name: 'uso-continuar', description: 'Libera freno y tope de esta sesión, la n° del desglose o todas, hasta el reinicio', argumentHint: '[n° | todas]' })
-    await $.command.register({ name: 'uso-prueba-freno', description: 'Simula el freno en esta sesión (repite para terminar la prueba)' })
-    await $.command.register({ name: 'uso-config', description: 'Abre la configuración: ajustes, historial y ayuda' })
-    await $.command.register({ name: 'uso-sin-freno', description: 'Activa o quita el ∞ (ignorar freno global) de esta sesión o la n° del desglose', argumentHint: '[n°]' })
-    await $.command.register({ name: 'uso-historial', description: 'Abre el historial de bloques de 5 h en un panel aparte' })
-    await $.command.register({ name: 'uso-limite', description: 'Tope de esta sesión en % del bloque de 5 h', argumentHint: '<n> | quitar' })
-    await $.command.register({ name: 'uso-pausar', description: 'Pausa esta sesión, la n° del desglose o todas', argumentHint: '[n° | todas]' })
-    await $.command.register({ name: 'uso-reanudar', description: 'Reanuda esta sesión, la n° del desglose o todas', argumentHint: '[n° | todas]' })
+    // Primero la configuración: las descripciones salen en el idioma elegido.
     await loadCfg($)
+    const anyHint = L('[n° | todas]', '[n | all]')
+    const defs: { name: CmdName; description: string; argumentHint?: string }[] = [
+      { name: 'uso', description: L('Muestra u oculta la franja de uso por sesión', 'Show or hide the per-session usage band') },
+      { name: 'uso-continuar', description: L('Libera freno y tope de esta sesión, la n° del desglose o todas, hasta el reinicio', 'Release brake and cap for this session, number n in the list, or all, until the reset'), argumentHint: anyHint },
+      { name: 'uso-prueba-freno', description: L('Simula el freno en esta sesión (repite para terminar la prueba)', 'Simulate the brake in this session (run again to end the test)') },
+      { name: 'uso-config', description: L('Abre la configuración: ajustes, historial y ayuda', 'Open the settings: settings, history and help') },
+      { name: 'uso-sin-freno', description: L('Activa o quita el ∞ (ignorar freno global) de esta sesión o la n° del desglose', 'Toggle ∞ (ignore global brake) for this session or number n in the list'), argumentHint: L('[n°]', '[n]') },
+      { name: 'uso-historial', description: L('Abre el historial de bloques de 5 h en un panel aparte', 'Open the 5-hour block history in a separate pane') },
+      { name: 'uso-limite', description: L('Tope de esta sesión en % del bloque de 5 h', "This session's cap as % of the 5-hour block"), argumentHint: L('<n> | quitar', '<n> | remove') },
+      { name: 'uso-pausar', description: L('Pausa esta sesión, la n° del desglose o todas', 'Pause this session, number n in the list, or all'), argumentHint: anyHint },
+      { name: 'uso-reanudar', description: L('Reanuda esta sesión, la n° del desglose o todas', 'Resume this session, number n in the list, or all'), argumentHint: anyHint },
+    ]
+    for (const d of defs) {
+      await $.command.register(d)
+      await $.command.register({ ...d, name: EN_CMD[d.name] })
+    }
     await update($, nowMs, () => Date.now())
     $.clock.every(60000, async () => {
       await loadCfg($)
@@ -590,7 +748,7 @@ export const register: Register = on => {
     if (!r) return next(e)
     await update($, stoppedBy, () => r.kind)
     return {
-      deny: `${r.text} No uses más herramientas ni empieces nada nuevo. Responde ahora en 2 o 3 líneas: dónde quedaste y cuál es el siguiente paso.`,
+      deny: `${r.text} ${L('No uses más herramientas ni empieces nada nuevo. Responde ahora en 2 o 3 líneas: dónde quedaste y cuál es el siguiente paso.', 'Do not use any more tools or start anything new. Reply now in 2 or 3 lines: where you left off and what the next step is.')}`,
     }
   })
 
@@ -600,95 +758,29 @@ export const register: Register = on => {
     return r ? { drop: r.text } : next(e)
   })
 
-  on('command.run', { command: 'uso-continuar' }, async ($, e) => {
-    const l = await limit($)
-    if (!l) return { text: 'Aún no hay dato del bloque de 5 h.' }
-    const isAll = e.args.trim().toLowerCase() === 'todas'
-    const list = await targets($, e.args)
-    if (!list.length) return { text: 'No encontré esa sesión. Usa el n° del desglose, "todas" o nada para esta sesión.' }
-    if (isAll) await $.store.set(APPROVED_KEY, l.resetsAt)
-    for (const t of list) {
-      await $.store.set(brakeOkKey(t.id), l.resetsAt)
-      await $.store.set(capOkKey(t.id), l.resetsAt)
-    }
-    await maybeResume($)
-    await syncStop($)
-    const who = isAll ? 'todas las sesiones' : list.map(t => t.title).join(', ')
-    return { text: `Freno y tope liberados para ${who} hasta el reinicio de las ${hhmm(l.resetsAt)}.` }
-  })
+  on('command.run', { command: 'uso-continuar' }, cmdUsoContinuar)
+  on('command.run', { command: 'session-continue' }, cmdUsoContinuar)
 
-  on('command.run', { command: 'uso-limite' }, async ($, e) => {
-    const me = await $.session.id()
-    const a = e.args.trim().toLowerCase().replace('%', '').replace(',', '.')
-    if (!a) {
-      const cap = await capOf($, me)
-      return { text: (cap !== undefined ? `Tope de esta sesión: ${fmt(cap)} % del bloque de 5 h. Cámbialo con /uso-limite <n> o quítalo con /uso-limite quitar.` : 'Esta sesión no tiene tope. Ponle uno con /uso-limite <n>, por ejemplo /uso-limite 20.') }
-    }
-    if (a === 'quitar') {
-      await $.store.set(capKey(me), 0)
-      await refresh($).catch(() => {})
-      return { text: 'Tope de esta sesión quitado.' }
-    }
-    const n = Number(a)
-    if (!(n > 0 && n <= 100)) return { text: 'Uso: /uso-limite 40 (porcentaje del bloque de 5 h) o /uso-limite quitar.' }
-    await $.store.set(capKey(me), n)
-    await $.store.delete(capOkKey(me))
-    await refresh($).catch(() => {})
-    return { text: `Tope de esta sesión: ${fmt(n)} % del bloque de 5 h.` }
-  })
+  on('command.run', { command: 'uso-limite' }, cmdUsoLimite)
+  on('command.run', { command: 'session-limit' }, cmdUsoLimite)
 
-  on('command.run', { command: 'uso-pausar' }, async ($, e) => {
-    const list = await targets($, e.args)
-    if (!list.length) return { text: 'No encontré esa sesión. Usa el n° del desglose, "todas" o nada para esta sesión.' }
-    for (const t of list) await $.store.set(pauseKey(t.id), true)
-    await refresh($).catch(() => {})
-    await syncStop($)
-    return { text: `Pausada(s): ${list.map(t => t.title).join(', ')}. Se detienen en su próximo paso.` }
-  })
+  on('command.run', { command: 'uso-pausar' }, cmdUsoPausar)
+  on('command.run', { command: 'session-pause' }, cmdUsoPausar)
 
-  on('command.run', { command: 'uso-reanudar' }, async ($, e) => {
-    const list = await targets($, e.args)
-    if (!list.length) return { text: 'No encontré esa sesión. Usa el n° del desglose, "todas" o nada para esta sesión.' }
-    for (const t of list) await $.store.delete(pauseKey(t.id))
-    await refresh($).catch(() => {})
-    await maybeResume($)
-    await syncStop($)
-    return { text: `Reanudada(s): ${list.map(t => t.title).join(', ')}. Las que estaban trabajando retoman en menos de un minuto.` }
-  })
+  on('command.run', { command: 'uso-reanudar' }, cmdUsoReanudar)
+  on('command.run', { command: 'session-resume' }, cmdUsoReanudar)
 
-  on('command.run', { command: 'uso-prueba-freno' }, async $ => {
-    if (await read($, test)) {
-      await update($, test, () => null)
-      await update($, stoppedBy, () => '')
-      await syncStop($)
-      return { text: 'Prueba del freno terminada.' }
-    }
-    const resetsAt = new Date(Date.now() + 60000).toISOString()
-    await update($, test, () => ({ pct: 84, resetsAt }))
-    await syncStop($)
-    return { text: 'Prueba del freno activa solo en esta sesión: simula 84 % con reinicio en 1 min (reanuda en ~3 min). Pídele a Claude que haga algo para ver el freno.' }
-  })
+  on('command.run', { command: 'uso-prueba-freno' }, cmdUsoPruebaFreno)
+  on('command.run', { command: 'session-brake-test' }, cmdUsoPruebaFreno)
 
-  on('command.run', { command: 'uso-sin-freno' }, async ($, e) => {
-    if (e.args.trim().toLowerCase() === 'todas') return { text: 'El ∞ se activa de a una sesión.' }
-    const t = (await targets($, e.args))[0]
-    if (!t) return { text: 'No encontré esa sesión. Usa el n° del desglose o nada para esta sesión.' }
-    await update($, armed, () => t.id)
-    await toggleBypass($, t.id)
-    return { text: 'Listo. Revisa el aviso para ver el resultado.' }
-  })
+  on('command.run', { command: 'uso-sin-freno' }, cmdUsoSinFreno)
+  on('command.run', { command: 'session-no-brake' }, cmdUsoSinFreno)
 
-  on('command.run', { command: 'uso-config' }, async $ => {
-    await update($, cfgTab, () => 'ajustes')
-    await $.ui.open({ id: HISTORY_PANE, title: 'Uso por sesión' })
-    return { text: 'Configuración abierta.' }
-  })
+  on('command.run', { command: 'uso-config' }, cmdUsoConfig)
+  on('command.run', { command: 'session-config' }, cmdUsoConfig)
 
-  on('command.run', { command: 'uso-historial' }, async $ => {
-    await update($, cfgTab, () => 'historial')
-    await $.ui.open({ id: HISTORY_PANE, title: 'Uso por sesión' })
-    return { text: 'Historial de uso abierto.' }
-  })
+  on('command.run', { command: 'uso-historial' }, cmdUsoHistorial)
+  on('command.run', { command: 'session-history' }, cmdUsoHistorial)
 
   on('ui.render', { component: 'Pane', requestId: HISTORY_PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
@@ -696,7 +788,7 @@ export const register: Register = on => {
     const tab = await read($, cfgTab)
     const tabs = (
       <Box flexDirection="row" gap="sm">
-        {[['sesiones', 'Sesiones'], ['ajustes', '⚙ Ajustes'], ['historial', 'Historial'], ['ayuda', 'Comandos']].map(([id, label]) => (
+        {[['sesiones', L('Sesiones', 'Sessions')], ['ajustes', L('⚙ Ajustes', '⚙ Settings')], ['historial', L('Historial', 'History')], ['ayuda', L('Comandos', 'Commands')]].map(([id, label]) => (
           <Button key={`tab-${id}`} label={label!} variant={tab === id ? 'primary' : 'secondary'} onPress={() => void update($, cfgTab, () => id!)} />
         ))}
       </Box>
@@ -705,14 +797,14 @@ export const register: Register = on => {
       const snap = await read($, snapshot)
       const me = await $.session.id()
       const Svg = 'Svg' in els ? els.Svg : undefined
-      if (!snap) return <Box flexDirection="column" gap="sm">{tabs}<Text dimColor>Calculando uso…</Text></Box>
+      if (!snap) return <Box flexDirection="column" gap="sm">{tabs}<Text dimColor>{L('Calculando uso…', 'Calculating usage…')}</Text></Box>
       const scale = Math.max(snap.fiveHour || 1, ...snap.sessions.map(s => s.cap ?? 0))
       const full = snap.sessions.filter(s => s.bypass).length >= CFG.maxBypass
       const barW = Math.max(50, Math.min(140, (e.props.bodyColumns ?? 60) * 8 - 330))
       return (
         <Box flexDirection="column" gap="sm">
           {tabs}
-          <Text size="caption" dimColor>Bloque de 5 h: {fmt(snap.fiveHour)} % usado · se reinicia a las {hhmm(snap.resetsAt)}</Text>
+          <Text size="caption" dimColor>{L(`Bloque de 5 h: ${fmt(snap.fiveHour)} % usado · se reinicia a las ${hhmm(snap.resetsAt)}`, `5-hour block: ${fmt(snap.fiveHour)} % used · resets at ${hhmm(snap.resetsAt)}`)}</Text>
           {snap.sessions.map((s, i) => {
             const atMax = s.cap === undefined || s.cap >= 100
             return (
@@ -732,7 +824,7 @@ export const register: Register = on => {
                   {atMax && CFG.maxBypass > 0 && !s.bypass && full
                     ? <Box key={`pup-${s.id}`}><Text dimColor>  ∞  </Text></Box>
                     : atMax && CFG.maxBypass > 0
-                    ? <Button key={`pup-${s.id}`} label={s.bypass ? '∞ activo' : '∞'} variant={s.bypass ? 'primary' : undefined} onPress={() => void (s.bypass ? undefined : toggleBypass($, s.id))} />
+                    ? <Button key={`pup-${s.id}`} label={s.bypass ? L('∞ activo', '∞ on') : '∞'} variant={s.bypass ? 'primary' : undefined} onPress={() => void (s.bypass ? undefined : toggleBypass($, s.id))} />
                     : <Button key={`pup-${s.id}`} label="+" onPress={() => void stepCap($, s.id, 1)} />}
                   <Button key={`pp-${s.id}`} label={s.paused ? '▶' : '⏸'} onPress={() => void setPaused($, s.id, !s.paused)} />
                 </Box>
@@ -744,25 +836,31 @@ export const register: Register = on => {
     }
     if (tab === 'ajustes') {
       const cfg = await loadCfg($)
-      const set = async (k: keyof Cfg, v: number) => {
+      const set = async (k: keyof Cfg, v: number | Lang) => {
         await $.store.set(CFG_KEY, { ...(await loadCfg($)), [k]: v })
         await loadCfg($)
         await refresh($).catch(() => {})
         await syncStop($)
         await update($, cfgTab, () => 'ajustes')
       }
-      const rows: { k: keyof Cfg; label: string; hint: string; step: number; min: number; max: number; show: (v: number) => string }[] = [
-        { k: 'brakeAt', label: 'Freno global', hint: 'Al llegar a este % del bloque de 5 h se frenan todas las sesiones. Lo que queda sobre el freno es el margen para cerrar ordenado.', step: 1, min: 50, max: 99, show: v => `${v} %` },
-        { k: 'closeMargin', label: 'Margen de cierre', hint: 'Cuánto antes del tope de una sesión (o del 100 % en una sesión ∞) empieza el cierre ordenado.', step: 1, min: 0, max: 10, show: v => `${v} %` },
-        { k: 'marginMin', label: 'Reanudar tras el reinicio', hint: 'Minutos de espera después del reinicio antes de retomar las sesiones frenadas.', step: 1, min: 0, max: 30, show: v => `${v} min` },
-        { k: 'defaultCap', label: 'Tope por defecto', hint: 'Tope con que parte toda sesión que no tenga uno propio. 0 = sin tope.', step: 5, min: 0, max: 100, show: v => (v ? `${v} %` : 'sin tope') },
-        { k: 'capStep', label: 'Paso de − / +', hint: 'Cuánto sube o baja el tope de una sesión con cada toque de − / +.', step: 1, min: 1, max: 50, show: v => `${v} %` },
-        { k: 'maxBypass', label: 'Sesiones sin freno (∞)', hint: 'Cuántas sesiones pueden ignorar el freno global a la vez. 0 = función desactivada.', step: 1, min: 0, max: 3, show: v => (v ? String(v) : 'desactivado') },
-        { k: 'warnPct', label: 'Aviso del tope', hint: 'Avisa cuando una sesión llega a este % de su tope.', step: 5, min: 50, max: 100, show: v => `${v} % del tope` },
+      const rows: { k: NumKey; label: string; hint: string; step: number; min: number; max: number; show: (v: number) => string }[] = [
+        { k: 'brakeAt', label: L('Freno global', 'Global brake'), hint: L('Al llegar a este % del bloque de 5 h se frenan todas las sesiones. Lo que queda sobre el freno es el margen para cerrar ordenado.', 'When the 5-hour block reaches this %, all sessions are braked. What is left above the brake is the margin to wrap up cleanly.'), step: 1, min: 50, max: 99, show: v => `${v} %` },
+        { k: 'closeMargin', label: L('Margen de cierre', 'Wrap-up margin'), hint: L('Cuánto antes del tope de una sesión (o del 100 % en una sesión ∞) empieza el cierre ordenado.', "How far before a session's cap (or 100 % for an ∞ session) the clean wrap-up starts."), step: 1, min: 0, max: 10, show: v => `${v} %` },
+        { k: 'marginMin', label: L('Reanudar tras el reinicio', 'Resume after reset'), hint: L('Minutos de espera después del reinicio antes de retomar las sesiones frenadas.', 'Minutes to wait after the reset before braked sessions pick up again.'), step: 1, min: 0, max: 30, show: v => `${v} min` },
+        { k: 'defaultCap', label: L('Tope por defecto', 'Default cap'), hint: L('Tope con que parte toda sesión que no tenga uno propio. 0 = sin tope.', "Cap every session starts with when it has none of its own. 0 = no cap."), step: 5, min: 0, max: 100, show: v => (v ? `${v} %` : L('sin tope', 'no cap')) },
+        { k: 'capStep', label: L('Paso de − / +', '− / + step'), hint: L('Cuánto sube o baja el tope de una sesión con cada toque de − / +.', "How much each − / + press raises or lowers a session's cap."), step: 1, min: 1, max: 50, show: v => `${v} %` },
+        { k: 'maxBypass', label: L('Sesiones sin freno (∞)', 'Sessions without brake (∞)'), hint: L('Cuántas sesiones pueden ignorar el freno global a la vez. 0 = función desactivada.', 'How many sessions can ignore the global brake at once. 0 = feature off.'), step: 1, min: 0, max: 3, show: v => (v ? String(v) : L('desactivado', 'off')) },
+        { k: 'warnPct', label: L('Aviso del tope', 'Cap warning'), hint: L('Avisa cuando una sesión llega a este % de su tope.', 'Warns when a session reaches this % of its cap.'), step: 5, min: 50, max: 100, show: v => L(`${v} % del tope`, `${v} % of cap`) },
       ]
       return (
         <Box flexDirection="column" gap="sm">
           {tabs}
+          <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
+            <Text weight="medium">Idioma / Language</Text>
+            <Box flexGrow={1} />
+            <Button key="lang-es" label="Español" variant={cfg.lang === 'es' ? 'primary' : 'secondary'} onPress={() => void set('lang', 'es')} />
+            <Button key="lang-en" label="English" variant={cfg.lang === 'en' ? 'primary' : 'secondary'} onPress={() => void set('lang', 'en')} />
+          </Box>
           {rows.map(r => (
             <Box key={r.k} flexDirection="column">
               <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
@@ -772,44 +870,45 @@ export const register: Register = on => {
                 <Text tabular>{r.show(cfg[r.k])}</Text>
                 <Button key={`${r.k}-up`} label="+" onPress={() => void set(r.k, Math.min(r.max, cfg[r.k] + r.step))} />
               </Box>
-              <Text size="caption" dimColor>{r.hint}{cfg[r.k] === DEFAULTS[r.k] ? '' : ` Por defecto: ${r.show(DEFAULTS[r.k])}.`}</Text>
+              <Text size="caption" dimColor>{r.hint}{cfg[r.k] === DEFAULTS[r.k] ? '' : L(` Por defecto: ${r.show(DEFAULTS[r.k])}.`, ` Default: ${r.show(DEFAULTS[r.k])}.`)}</Text>
             </Box>
           ))}
           <Box flexDirection="row" gap="sm">
-            <Button key="cfg-reset" label="Restaurar valores por defecto" onPress={() => void $.store.set(CFG_KEY, { ...DEFAULTS }).then(() => set('brakeAt', DEFAULTS.brakeAt))} />
+            <Button key="cfg-reset" label={L('Restaurar valores por defecto', 'Restore defaults')} onPress={() => void $.store.set(CFG_KEY, { ...DEFAULTS, lang: CFG.lang }).then(() => set('brakeAt', DEFAULTS.brakeAt))} />
           </Box>
-          <Text size="caption" dimColor>Los ajustes valen para todas tus sesiones y llegan a las demás en menos de un minuto.</Text>
+          <Text size="caption" dimColor>{L('Los ajustes valen para todas tus sesiones y llegan a las demás en menos de un minuto.', 'Settings apply to all your sessions and reach the others in under a minute.')}</Text>
         </Box>
       )
     }
     if (tab === 'ayuda') {
+      const any = L('[n° | todas]', '[n | all]')
       const help: [string, string][] = [
-        ['/uso', 'Oculta o muestra la franja (también la ✕).'],
-        ['/uso-config', 'Abre este panel.'],
-        ['/uso-historial', 'Abre el panel en el historial.'],
-        ['/uso-limite 30', 'Tope de esta sesión en % del bloque de 5 h.'],
-        ['/uso-limite', 'Muestra el tope actual de esta sesión.'],
-        ['/uso-limite quitar', 'Quita el tope de esta sesión.'],
-        ['/uso-pausar [n° | todas]', 'Pausa esta sesión, la n° del desglose o todas.'],
-        ['/uso-reanudar [n° | todas]', 'Reanuda; las que trabajaban retoman solas.'],
-        ['/uso-continuar [n° | todas]', 'Libera freno y tope hasta el reinicio (sin nada: esta sesión).'],
-        ['/uso-sin-freno [n°]', 'Activa o quita el ∞: la sesión ignora el freno global hasta el reinicio (pide confirmar).'],
-        ['/uso-prueba-freno', 'Simula el freno en esta sesión; repítelo para terminar.'],
+        [C('uso'), L('Oculta o muestra la franja (también la ✕).', 'Hides or shows the band (so does ✕).')],
+        [C('uso-config'), L('Abre este panel.', 'Opens this pane.')],
+        [C('uso-historial'), L('Abre el panel en el historial.', 'Opens the pane on the history.')],
+        [`${C('uso-limite')} 30`, L('Tope de esta sesión en % del bloque de 5 h.', "This session's cap as % of the 5-hour block.")],
+        [C('uso-limite'), L('Muestra el tope actual de esta sesión.', "Shows this session's current cap.")],
+        [`${C('uso-limite')} ${L('quitar', 'remove')}`, L('Quita el tope de esta sesión.', "Removes this session's cap.")],
+        [`${C('uso-pausar')} ${any}`, L('Pausa esta sesión, la n° del desglose o todas.', 'Pauses this session, number n in the list, or all.')],
+        [`${C('uso-reanudar')} ${any}`, L('Reanuda; las que trabajaban retoman solas.', 'Resumes; those that were working pick up on their own.')],
+        [`${C('uso-continuar')} ${any}`, L('Libera freno y tope hasta el reinicio (sin nada: esta sesión).', 'Releases brake and cap until the reset (no argument: this session).')],
+        [`${C('uso-sin-freno')} ${L('[n°]', '[n]')}`, L('Activa o quita el ∞: la sesión ignora el freno global hasta el reinicio (pide confirmar).', 'Toggles ∞: the session ignores the global brake until the reset (asks to confirm).')],
+        [C('uso-prueba-freno'), L('Simula el freno en esta sesión; repítelo para terminar.', 'Simulates the brake in this session; run it again to end.')],
       ]
       return (
         <Box flexDirection="column" gap="sm">
           {tabs}
-          <Text size="caption" dimColor>En los comandos con número o texto, presiona Esc antes de Enter para cerrar el menú de sugerencias.</Text>
+          <Text size="caption" dimColor>{L('En los comandos con número o texto, presiona Esc antes de Enter para cerrar el menú de sugerencias.', 'For commands with a number or text, press Esc before Enter to close the suggestions menu.')}</Text>
           {help.map(([cmd, what]) => (
             <Box key={cmd} flexDirection="column">
               <Text weight="medium" mono>{cmd}</Text>
               <Text size="caption" dimColor>{what}</Text>
             </Box>
           ))}
-          <Text size="caption" weight="medium">Colores del punto</Text>
-          <Text size="caption" dimColor>Verde holgado · amarillo justo · naranjo te pasas por menos de 1 h · rojo 1–2 h · morado 2–3 h · morado oscuro más. Desde rojo parpadea.</Text>
-          <Text size="caption" weight="medium">Desglose</Text>
-          <Text size="caption" dimColor>− / + cambian el tope de la sesión de a 10 %; ⏸ / ▶ la pausan o reanudan; ∞ la deja sin freno global (nombre en color de Claude); la raya clara en la barra marca su tope.</Text>
+          <Text size="caption" weight="medium">{L('Colores del punto', 'Dot colors')}</Text>
+          <Text size="caption" dimColor>{L('Verde holgado · amarillo justo · naranjo te pasas por menos de 1 h · rojo 1–2 h · morado 2–3 h · morado oscuro más. Desde rojo parpadea.', 'Green plenty of room · yellow tight · orange you run out less than 1 h early · red 1–2 h · purple 2–3 h · dark purple more. Blinks from red up.')}</Text>
+          <Text size="caption" weight="medium">{L('Desglose', 'Breakdown')}</Text>
+          <Text size="caption" dimColor>{L(`− / + cambian el tope de la sesión de a ${CFG.capStep} %; ⏸ / ▶ la pausan o reanudan; ∞ la deja sin freno global (nombre en color de Claude); la raya clara en la barra marca su tope.`, `− / + change the session's cap by ${CFG.capStep} %; ⏸ / ▶ pause or resume it; ∞ exempts it from the global brake (name in Claude's color); the light mark on the bar shows its cap.`)}</Text>
         </Box>
       )
     }
@@ -831,52 +930,52 @@ export const register: Register = on => {
       ? { ...weeklyChart(all.slice().reverse(), width, snapNow.weeklyResetsAt, Date.now(), snapNow.weekly), end: snapNow.weeklyResetsAt }
       : null
     const ranges = [
-      { value: 'semana', label: 'Última semana' },
-      { value: 'mes', label: 'Último mes' },
-      { value: 'año', label: 'Último año' },
-      { value: 'todo', label: 'Histórico' },
+      { value: 'semana', label: L('Última semana', 'Last week') },
+      { value: 'mes', label: L('Último mes', 'Last month') },
+      { value: 'año', label: L('Último año', 'Last year') },
+      { value: 'todo', label: L('Histórico', 'All time') },
     ]
     return (
       <Box flexDirection="column" gap="sm">
         {tabs}
         <Box flexDirection={(e.props.bodyColumns ?? 60) >= 110 ? "row" : "column"} flexWrap="wrap" gap="sm" alignItems={(e.props.bodyColumns ?? 60) >= 110 ? "center" : "flex-start"}>
-          {Select && <Select key="range" label="Periodo" options={ranges} value={range} onSelect={v => void update($, histRange, () => v)} />}
+          {Select && <Select key="range" label={L('Periodo', 'Period')} options={ranges} value={range} onSelect={v => void update($, histRange, () => v)} />}
           {Select && perSession && (
-            <Select key="who" label="Sesión" options={[{ value: '', label: 'Todas' }, ...titles.map(t => ({ value: t, label: t.length > 30 ? `${t.slice(0, 29)}…` : t }))]}
+            <Select key="who" label={L('Sesión', 'Session')} options={[{ value: '', label: L('Todas', 'All') }, ...titles.map(t => ({ value: t, label: t.length > 30 ? `${t.slice(0, 29)}…` : t }))]}
               value={who} onSelect={v => void update($, histSession, () => v)} />
           )}
           {Select && perSession && (
-            <Select key="group" label="Agrupar" options={[{ value: 'bloque', label: 'Por ventana de 5 h' }, { value: 'dia', label: 'Por día' }]}
+            <Select key="group" label={L('Agrupar', 'Group')} options={[{ value: 'bloque', label: L('Por ventana de 5 h', 'By 5-hour window') }, { value: 'dia', label: L('Por día', 'By day') }]}
               value={group} onSelect={v => void update($, histGroup, () => v)} />
           )}
         </Box>
-        {!perSession && <Text size="caption" dimColor>El detalle por sesión está disponible hasta el último mes.</Text>}
+        {!perSession && <Text size="caption" dimColor>{L('El detalle por sesión está disponible hasta el último mes.', 'Per-session detail is available up to the last month.')}</Text>}
         {buckets.length === 0 || !Svg ? (
-          <Text dimColor>Aún no hay bloques guardados en este periodo. El historial se llena desde que el mod quedó instalado.</Text>
+          <Text dimColor>{L('Aún no hay bloques guardados en este periodo. El historial se llena desde que el mod quedó instalado.', 'No blocks saved in this period yet. The history fills up from when the mod was installed.')}</Text>
         ) : (
           <Box flexDirection="column" gap="sm">
             <Text size="caption" weight="medium">{unit}</Text>
-            <Svg source={historyChart(buckets, width, byBlock)} alt="Uso en el periodo" width={width} height={222} isInteractive />
+            <Svg source={historyChart(buckets, width, byBlock)} alt={L('Uso en el periodo', 'Usage in the period')} width={width} height={222} isInteractive />
             {range === 'semana' && weekly && (
               <Box flexDirection="column" gap="sm">
-                <Text size="caption" weight="medium">Semanal · del inicio al reinicio del periodo</Text>
-                <Svg source={weekly.svg} alt="Uso semanal en el tiempo" width={width} height={130} isInteractive />
-                <Text size="caption" dimColor>{weekly.hit !== null ? `A este ritmo llegas al 100 % el ${dayName(new Date(weekly.hit).toISOString())} a las ${hhmm(new Date(weekly.hit).toISOString())}, antes del reinicio (${dayName(weekly.end)} ${hhmm(weekly.end)}).` : `A este ritmo no llegas al 100 % antes del reinicio (${dayName(weekly.end)} ${hhmm(weekly.end)}).`} Línea punteada: proyección lineal; raya gris: ahora.</Text>
+                <Text size="caption" weight="medium">{L('Semanal · del inicio al reinicio del periodo', 'Weekly · from the start to the reset of the period')}</Text>
+                <Svg source={weekly.svg} alt={L('Uso semanal en el tiempo', 'Weekly usage over time')} width={width} height={130} isInteractive />
+                <Text size="caption" dimColor>{weekly.hit !== null
+                  ? L(`A este ritmo llegas al 100 % el ${dayName(new Date(weekly.hit).toISOString())} a las ${hhmm(new Date(weekly.hit).toISOString())}, antes del reinicio (${dayName(weekly.end)} ${hhmm(weekly.end)}).`, `At this pace you hit 100 % on ${dayName(new Date(weekly.hit).toISOString())} at ${hhmm(new Date(weekly.hit).toISOString())}, before the reset (${dayName(weekly.end)} ${hhmm(weekly.end)}).`)
+                  : L(`A este ritmo no llegas al 100 % antes del reinicio (${dayName(weekly.end)} ${hhmm(weekly.end)}).`, `At this pace you won't hit 100 % before the reset (${dayName(weekly.end)} ${hhmm(weekly.end)}).`)}
+                  {L(' Línea punteada: proyección lineal; raya gris: ahora.', ' Dashed line: linear projection; gray line: now.')}</Text>
               </Box>
             )}
-            {byBlock && <Text size="caption" dimColor>Cada barra es una ventana de 5 h, rotulada con la hora en que se reinició; las líneas punteadas separan los días. Línea roja: freno del {CFG.brakeAt} %.</Text>}
-            {!byBlock && perSession && <Text size="caption" dimColor>Cada barra suma los % de las ventanas de 5 h de ese día: 150 % equivale a una ventana y media gastada.</Text>}
+            {byBlock && <Text size="caption" dimColor>{L(`Cada barra es una ventana de 5 h, rotulada con la hora en que se reinició; las líneas punteadas separan los días. Línea roja: freno del ${CFG.brakeAt} %.`, `Each bar is a 5-hour window, labeled with the time it reset; dashed lines separate days. Red line: ${CFG.brakeAt} % brake.`)}</Text>}
+            {!byBlock && perSession && <Text size="caption" dimColor>{L('Cada barra suma los % de las ventanas de 5 h de ese día: 150 % equivale a una ventana y media gastada.', "Each bar adds up the % of that day's 5-hour windows: 150 % means one and a half windows used.")}</Text>}
           </Box>
         )}
       </Box>
     )
   })
 
-  on('command.run', { command: 'uso' }, async $ => {
-    const hidden = !(await read($, isMin))
-    await update($, isMin, () => hidden)
-    return { text: hidden ? 'Franja de uso oculta. Escribe /uso para volver a mostrarla.' : 'Franja de uso visible.' }
-  })
+  on('command.run', { command: 'uso' }, cmdUso)
+  on('command.run', { command: 'session-usage' }, cmdUso)
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
@@ -889,7 +988,7 @@ export const register: Register = on => {
     if (e.props.hasSurvey) return next(e)
     if (snap === null) {
       const { Text } = $.ui.resolve(e)
-      return <Text dimColor>{await read($, status)}</Text>
+      return <Text dimColor>{(await read($, status)) || L('Calculando uso…', 'Calculating usage…')}</Text>
     }
 
     const open = await read($, isOpen)
@@ -939,28 +1038,28 @@ export const register: Register = on => {
         <Box flexDirection="row" alignItems="center" gap="sm">
           <Text size="caption" wrap="truncate">
             {myBypass && <Text color={CLAY} weight="semibold">∞ </Text>}
-            {mode !== 'narrow' && <Text weight="medium" color={myBypass ? CLAY : undefined}>Esta sesión </Text>}
+            {mode !== 'narrow' && <Text weight="medium" color={myBypass ? CLAY : undefined}>{L('Esta sesión ', 'This session ')}</Text>}
             <Text weight="semibold" tabular>{fmt(snap.current)} %</Text>
-            <Text dimColor>{mode === 'wide' ? ` de ${fmt(snap.fiveHour)} % usado` : ` / ${fmt(snap.fiveHour)} %`}</Text>
+            <Text dimColor>{mode === 'wide' ? L(` de ${fmt(snap.fiveHour)} % usado`, ` of ${fmt(snap.fiveHour)} % used`) : ` / ${fmt(snap.fiveHour)} %`}</Text>
           </Text>
           {track(W.head, snap.current, snap.fiveHour - snap.current, true, snap.sessions.find(s => s.id === me)?.cap)}
           <Box flexGrow={1} />
           {(() => {
             const c = paceColor(snap.fiveHour, snap.resetsAt, now)
             const dot = !c ? null : Svg ? (
-              <Svg source={dotSvg(c)} alt="ritmo de uso" width={10} height={10} isInteractive={BLINKS.includes(c)} />
+              <Svg source={dotSvg(c)} alt={L('ritmo de uso', 'usage pace')} width={10} height={10} isInteractive={BLINKS.includes(c)} />
             ) : (
               <Text size="caption" color={c}>●</Text>
             )
             if (braked) {
               return (
-                <Text size="caption" color="#ef4444" wrap="truncate">{resume ? (mode === 'wide' ? `⏸ frenado · reanuda ${hhmm(new Date(resume).toISOString())}` : `⏸ ${hhmm(new Date(resume).toISOString())}`) : '⏸ pausada'}</Text>
+                <Text size="caption" color="#ef4444" wrap="truncate">{resume ? (mode === 'wide' ? L(`⏸ frenado · reanuda ${hhmm(new Date(resume).toISOString())}`, `⏸ braked · resumes ${hhmm(new Date(resume).toISOString())}`) : `⏸ ${hhmm(new Date(resume).toISOString())}`) : L('⏸ pausada', '⏸ paused')}</Text>
               )
             }
             return (
               <Box flexDirection="row" alignItems="center" gap="xs">
                 {dot}
-                <Text size="caption" dimColor wrap="truncate">{!snap.resetsAt ? (mode === 'wide' ? 'bloque nuevo · empieza con tu próximo mensaje' : 'bloque nuevo') : mode === 'wide' ? `se reinicia en ${left(snap.resetsAt, now)}` : leftShort(snap.resetsAt, now)}</Text>
+                <Text size="caption" dimColor wrap="truncate">{!snap.resetsAt ? (mode === 'wide' ? L('bloque nuevo · empieza con tu próximo mensaje', 'new block · starts with your next message') : L('bloque nuevo', 'new block')) : mode === 'wide' ? L(`se reinicia en ${left(snap.resetsAt, now)}`, `resets in ${left(snap.resetsAt, now)}`) : leftShort(snap.resetsAt, now)}</Text>
               </Box>
             )
           })()}
@@ -986,7 +1085,7 @@ export const register: Register = on => {
                 (s.cap === undefined || s.cap >= 100) && CFG.maxBypass > 0 && !s.bypass && bypassFull
                   ? <Box key={`up-${s.id}`}><Text dimColor>  ∞  </Text></Box>
                   : (s.cap === undefined || s.cap >= 100) && CFG.maxBypass > 0
-                  ? <Button key={`up-${s.id}`} label={s.bypass ? '∞ activo' : '∞'} dimColor={!s.bypass && bypassFull} variant={s.bypass ? 'primary' : undefined} onPress={() => void (s.bypass ? undefined : toggleBypass($, s.id))} />
+                  ? <Button key={`up-${s.id}`} label={s.bypass ? L('∞ activo', '∞ on') : '∞'} dimColor={!s.bypass && bypassFull} variant={s.bypass ? 'primary' : undefined} onPress={() => void (s.bypass ? undefined : toggleBypass($, s.id))} />
                   : <Button key={`up-${s.id}`} label="+" onPress={() => void stepCap($, s.id, 1)} />,
                 <Button key={`p-${s.id}`} label={s.paused ? '▶' : '⏸'} onPress={() => void setPaused($, s.id, !s.paused)} />,
               ]
@@ -1010,14 +1109,14 @@ export const register: Register = on => {
             })}
             {snap.sessions.length > fit && (
               <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
-                <Text size="caption" dimColor>+{snap.sessions.length - fit} sesiones más</Text>
-                <Button key="all" label="Ver todas" onPress={() => void update($, cfgTab, () => 'sesiones').then(() => $.ui.open({ id: HISTORY_PANE, title: 'Uso por sesión' }))} />
+                <Text size="caption" dimColor>{L(`+${snap.sessions.length - fit} sesiones más`, `+${snap.sessions.length - fit} more sessions`)}</Text>
+                <Button key="all" label={L('Ver todas', 'See all')} onPress={() => void update($, cfgTab, () => 'sesiones').then(() => $.ui.open({ id: HISTORY_PANE, title: paneTitle() }))} />
               </Box>
             )}
             {snap.weekly !== null && (() => {
               const c = paceColor(snap.weekly, snap.weeklyResetsAt, now, SEVEN_DAYS)
               const dot = !c ? null : Svg ? (
-                <Svg source={dotSvg(c)} alt="ritmo semanal" width={10} height={10} isInteractive={BLINKS.includes(c)} />
+                <Svg source={dotSvg(c)} alt={L('ritmo semanal', 'weekly pace')} width={10} height={10} isInteractive={BLINKS.includes(c)} />
               ) : (
                 <Text size="caption" color={c}>●</Text>
               )
@@ -1025,18 +1124,18 @@ export const register: Register = on => {
               const rest = ms > 0 ? (ms >= 86400e3 ? `${Math.floor(ms / 86400e3)} d ${Math.floor((ms % 86400e3) / 3600e3)} h` : `${Math.floor(ms / 3600e3)} h`) : ''
               return (
                 <Box flexDirection="row" alignItems="center" gap="xs">
-                  <Text size="caption" dimColor>{mode === 'wide' ? 'Semanal · todos los modelos' : 'Semanal'} {fmt(snap.weekly)} %</Text>
+                  <Text size="caption" dimColor>{mode === 'wide' ? L('Semanal · todos los modelos', 'Weekly · all models') : L('Semanal', 'Weekly')} {fmt(snap.weekly)} %</Text>
                   {dot}
-                  {rest && <Text size="caption" dimColor>{mode === 'wide' ? `se reinicia en ${rest}` : rest}</Text>}
+                  {rest && <Text size="caption" dimColor>{mode === 'wide' ? L(`se reinicia en ${rest}`, `resets in ${rest}`) : rest}</Text>}
                 </Box>
               )
             })()}
             <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap="sm" minHeight={2}>
               <Box flexGrow={1} />
-              <Button key="pause-all" label="⏸ Todas" onPress={() => void Promise.all(snap.sessions.map(s => $.store.set(pauseKey(s.id), true))).then(() => setPaused($, me, true))} />
-              <Button key="resume-all" label="▶ Todas" onPress={() => void Promise.all(snap.sessions.map(s => $.store.delete(pauseKey(s.id)))).then(() => setPaused($, me, false))} />
-              <Button key="config" label="⚙ Configuración" onPress={() => void update($, cfgTab, () => 'ajustes').then(() => $.ui.open({ id: HISTORY_PANE, title: 'Uso por sesión' }))} />
-              {braked && <Button key="continue" label="Continuar" variant="primary" onPress={() => void $.command.run({ command: 'uso-continuar', args: '' })} />}
+              <Button key="pause-all" label={L('⏸ Todas', '⏸ Pause all')} onPress={() => void Promise.all(snap.sessions.map(s => $.store.set(pauseKey(s.id), true))).then(() => setPaused($, me, true))} />
+              <Button key="resume-all" label={L('▶ Todas', '▶ Resume all')} onPress={() => void Promise.all(snap.sessions.map(s => $.store.delete(pauseKey(s.id)))).then(() => setPaused($, me, false))} />
+              <Button key="config" label={L('⚙ Configuración', '⚙ Settings')} onPress={() => void update($, cfgTab, () => 'ajustes').then(() => $.ui.open({ id: HISTORY_PANE, title: paneTitle() }))} />
+              {braked && <Button key="continue" label={L('Continuar', 'Continue')} variant="primary" onPress={() => void $.command.run({ command: 'uso-continuar', args: '' })} />}
             </Box>
           </Box>
         )}

@@ -21,6 +21,8 @@ Franja compacta sobre el cuadro de texto de Claude Code que reparte el uso del b
 | `/uso-sin-freno` / `/uso-sin-freno 3` | Activa o quita el **∞**: esa sesión ignora el freno global hasta el reinicio (máximo 1 a la vez por defecto). |
 | `/uso-prueba-freno` | Simula el freno en esta sesión para probarlo. Repítelo para terminar la prueba. |
 
+Cada comando tiene un alias en inglés (`/session-usage`, `/session-limit`, `/session-pause`…; lista en el [README principal](../README.md)). Los dos funcionan igual con cualquier idioma.
+
 Los comandos con número o texto (`/uso-limite 30`, `/uso-pausar 3`): presiona **Esc** antes de Enter para cerrar el menú de sugerencias, o el número se pierde.
 
 ## Botones del desglose (›)
@@ -42,6 +44,7 @@ En **⚙ Configuración → Ajustes** cada persona ajusta con − / +:
 | Paso de − / + | 10 % | Cuánto sube o baja el tope de una sesión con cada toque. |
 | Sesiones sin freno (∞) | 1 | Cuántas pueden ignorar el freno global a la vez (0 = desactivado). |
 | Aviso del tope | 80 % del tope | Cuándo avisar que una sesión se acerca a su tope. |
+| Idioma | el del sistema | Español o inglés. |
 
 **Restaurar valores por defecto** vuelve a estos valores. Los ajustes valen para todas tus sesiones.
 
