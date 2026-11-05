@@ -813,7 +813,7 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" gap="sm">
         {tabs}
-        <Box flexDirection="row" gap="sm" alignItems="center">
+        <Box flexDirection={(e.props.bodyColumns ?? 60) >= 110 ? "row" : "column"} flexWrap="wrap" gap="sm" alignItems={(e.props.bodyColumns ?? 60) >= 110 ? "center" : "flex-start"}>
           {Select && <Select key="range" label="Periodo" options={ranges} value={range} onSelect={v => void update($, histRange, () => v)} />}
           {Select && perSession && (
             <Select key="who" label="Sesión" options={[{ value: '', label: 'Todas' }, ...titles.map(t => ({ value: t, label: t.length > 30 ? `${t.slice(0, 29)}…` : t }))]}
