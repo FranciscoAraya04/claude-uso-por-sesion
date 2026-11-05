@@ -1,16 +1,24 @@
 # Claude Code usage per session
 
-**Per-session usage tracker and auto-brake for Claude Code's 5-hour limit.**
+**Per-session budgets and an auto-brake for parallel Claude Code sessions sharing the 5-hour limit.**
 
-The 5-hour limit only shows one total. If you run several sessions in parallel, you can't tell which one is spending it, and you only find out you're out when Anthropic cuts you off mid-task. This plugin adds a compact band above the prompt (terminal and desktop app) that:
+When several Claude Code sessions run in parallel, they all draw from one 5-hour block. You can't see which session is using it up, and once the block runs out you're without Claude until the reset, often in the middle of a task.
 
-- **splits the 5-hour block between your sessions**: "This session 12 % of 47 % used";
-- shows a **pace dot**: green if you'll make it, red and blinking if you'll hit 100 % before the reset;
-- **brakes every session at 83 %** (configurable), *safely*: tools are blocked, Claude writes a 2–3 line summary of where it stopped, and the session **resumes on its own** after the reset;
-- gives each session its own **cap** (35 % by default), plus pause/resume and a one-session **∞** mode that ignores the global brake;
-- keeps a **graphical history**: 5-hour windows or days, per-session filter, and a weekly chart with a linear projection of the day you'll reach 100 %.
+This plugin adds a compact band above the prompt, in the terminal and the desktop app, that:
+
+- **breaks the block down by session**: "This session 12 % of 47 % used";
+- gives each session a **budget** (35 % of the block by default) that stops it cleanly when it's reached;
+- lets you **pause or resume any session from any other**;
+- **brakes every session at 83 %** (configurable), with a clean stop: tools are blocked and Claude writes a 2–3 line summary of where it left off;
+- keeps the rest of the block **in reserve** for anything urgent, with a one-session **∞** mode and a Continue button;
+- **resumes braked sessions automatically** after the reset;
+- shows a **pace dot** and a **history** of 5-hour windows and days, including a weekly projection of when you'd reach 100 %.
 
 Everything is available in **English and Spanish** (⚙ Settings → Language).
+
+## How it differs from usage monitors
+
+A usage monitor shows the total for your account. This plugin divides that total between your sessions and controls them: each one gets a budget, any session can pause another, and all of them stop before the block runs out, so there's still something left when you need it.
 
 <p align="center"><img src="docs/demo.gif" alt="Usage per session band, per-session caps, the brake and the history panel" width="520"></p>
 
