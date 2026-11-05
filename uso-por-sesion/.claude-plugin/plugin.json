@@ -1,8 +1,7 @@
 {
   "name": "uso-por-sesion",
-  "version": "1.0.0",
-  "description": "Franja compacta con el % del bloque de 5 h que aporta cada sesión",
-  "types": "./types/index.d.ts",
+  "version": "1.0.1",
+  "description": "Per-session budgets and an auto-brake for parallel Claude Code sessions sharing the 5-hour limit",
   "license": "MIT",
   "author": {
     "name": "FranciscoAraya04"

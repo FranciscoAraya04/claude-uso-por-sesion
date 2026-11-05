@@ -2,6 +2,25 @@
 
 Franja compacta sobre el cuadro de texto de Claude Code que reparte el uso del bloque de 5 horas entre tus sesiones, avisa con un punto de color si vas a quedarte corto, y frena las sesiones antes de agotar el límite.
 
+
+## Privacy and permissions
+
+**Nothing leaves your computer.** The plugin makes no network requests and sends no data to Anthropic or anyone else. Everything it stores stays in Claude Code's local plugin store (`~/.claude/plugins/store/`) and in `.scan-cache.json` inside the plugin folder.
+
+What it does, and why:
+
+- **Runs one program: `node hooks/scan.js`** (the fixed script that ships in this plugin, with Node from Claude Code). Once a minute, and on session start, it reads your local session logs in `~/.claude/projects/*/*.jsonl`. From each session it takes only the token counts, the model name and the session title, to split the 5-hour block between sessions. It prints the result to the plugin and never sends it anywhere. Message text is not read for anything else and is not stored.
+- **Reads the 5-hour and weekly limits** that Claude Code already shows (`session.usage`), to know the block total and the reset time.
+- **Submits one fixed prompt to resume a braked session** (`prompt.submit`), only after the brake, cap or pause that stopped it is gone. The text is always one of three fixed sentences, for example "The 5-hour block has reset (uso-por-sesion brake). Continue the task exactly where you left off." It carries no data from your sessions.
+- **Blocks tool calls while a session is braked** (`tool.call`). The block only applies when the 5-hour block reaches the global brake (83 % by default), the session reaches its own cap, or you paused it. Claude then gets a fixed message asking it to stop and summarize where it left off. Otherwise every tool call passes through unchanged, and the plugin never approves anything on your behalf. You can lift the brake at any time with `/uso-continuar` (`/session-continue`), the Continue button, or by raising the brake in Settings.
+- **Holds your own messages while a session is braked** (`prompt.submit`) and tells you why. Messages pass through unchanged when nothing is braking the session, and the plugin's own resume prompt always passes.
+- **Handles only its own slash commands** (`command.run` for `/uso-…` and `/session-…`). Other commands are not touched.
+- **Runs one slash command by itself:** the **Continue** button in the band runs `/uso-continuar` for this session, which is the same as typing it. Nothing runs without that click.
+
+## Privacidad y permisos (resumen)
+
+No envía nada fuera de tu computador. Solo ejecuta `node hooks/scan.js` para leer los conteos de tokens de tus registros locales. Mientras una sesión está frenada, bloquea sus herramientas y retiene tus mensajes; de lo contrario los deja pasar sin cambios. Para reanudar envía solo frases fijas, y el botón **Continuar** ejecuta `/uso-continuar`.
+
 ## Comandos
 
 | Comando | Qué hace |

@@ -111,18 +111,18 @@ const hhmm = (iso: string | null) => {
 const px = (n: number, width: number) => Math.max(0, Math.min(width, Math.round((n / 100) * width)))
 
 const svgBar = (width: number, mine: number, rest: number, mineColor: string, cap?: number) => {
-  const h = 6
-  const r = h / 2
+  const ht = 6
+  const r = ht / 2
   const a = Math.max(0, Math.min(width, (mine / 100) * width))
   const b = Math.max(0, Math.min(width - a, (rest / 100) * width))
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${h}" viewBox="0 0 ${width} ${h}">` +
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${ht}" viewBox="0 0 ${width} ${ht}">` +
     '<style>.bg{fill:#3a3936}.rest{fill:#7d7b74}.cap{fill:#f5f5f4}' +
     '@media (prefers-color-scheme: light){.bg{fill:#e4e2db}.rest{fill:#a19f97}.cap{fill:#2b2a27}}</style>' +
-    `<clipPath id="c"><rect width="${width}" height="${h}" rx="${r}"/></clipPath>` +
-    `<g clip-path="url(#c)"><rect class="bg" width="${width}" height="${h}"/>` +
-    `<rect class="rest" width="${(a + b).toFixed(1)}" height="${h}"/>` +
-    `<rect width="${a.toFixed(1)}" height="${h}" fill="${mineColor}"/></g>` +
-    (cap === undefined ? '' : `<rect x="${Math.max(0, Math.min(width - 2, (cap / 100) * width - 1)).toFixed(1)}" width="2" height="${h}" class="cap"/>`) +
+    `<clipPath id="c"><rect width="${width}" height="${ht}" rx="${r}"/></clipPath>` +
+    `<g clip-path="url(#c)"><rect class="bg" width="${width}" height="${ht}"/>` +
+    `<rect class="rest" width="${(a + b).toFixed(1)}" height="${ht}"/>` +
+    `<rect width="${a.toFixed(1)}" height="${ht}" fill="${mineColor}"/></g>` +
+    (cap === undefined ? '' : `<rect x="${Math.max(0, Math.min(width - 2, (cap / 100) * width - 1)).toFixed(1)}" width="2" height="${ht}" class="cap"/>`) +
     '</svg>'
 }
 
@@ -160,9 +160,9 @@ type $T = Parameters<Hook<'turn.complete'>>[0]
 
 const PALETTE = ['#3b82f6', '#22c55e', '#f59e0b', '#ec4899', '#14b8a6', '#a855f7', '#ef4444', '#84cc16']
 const colorOf = (title: string) => {
-  let h = 0
-  for (const ch of title) h = (h * 31 + ch.charCodeAt(0)) >>> 0
-  return PALETTE[h % PALETTE.length]!
+  let hash = 0
+  for (const ch of title) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
+  return PALETTE[hash % PALETTE.length]!
 }
 const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const shortDay = (iso: string) => {
@@ -246,12 +246,12 @@ function bucketize(all: HistoryBlock[], range: string, who: string, group = ''):
 
 // Barras apiladas: cada sesión con su color, el resto en gris; con freno, línea al 83 %.
 function historyChart(list: Bucket[], width: number, showBrake: boolean) {
-  const h = 222, top = 14, bottom = 46, left = 34, plot = h - top - bottom
+  const ht = 222, top = 14, bottom = 46, left = 34, plot = ht - top - bottom
   const max = Math.max(100, ...list.map(b => b.total))
   const step = (width - left - 8) / list.length
   const bw = Math.max(4, Math.min(28, step * 0.7))
   const y = (pct: number) => top + plot - (Math.min(max, pct) / max) * plot
-  let out = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${h}" viewBox="0 0 ${width} ${h}" font-family="sans-serif" font-size="10">`
+  let out = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${ht}" viewBox="0 0 ${width} ${ht}" font-family="sans-serif" font-size="10">`
   for (const g of [0, max / 2, max]) {
     out += `<line x1="${left}" x2="${width - 4}" y1="${y(g)}" y2="${y(g)}" stroke="#3a3936" stroke-width="1"/><text x="${left - 4}" y="${y(g) + 3}" fill="#8f8d85" text-anchor="end">${Math.round(g)}</text>`
   }
@@ -283,19 +283,19 @@ function historyChart(list: Bucket[], width: number, showBrake: boolean) {
       // Barras por ventana de 5 h: separador y nombre del día donde empieza uno nuevo.
       if (b.day !== list[i - 1]?.day) {
         const sx = (left + i * step).toFixed(1)
-        if (i > 0) out += `<line x1="${sx}" x2="${sx}" y1="${top}" y2="${h - bottom + 16}" stroke="#55534e" stroke-width="1" stroke-dasharray="2 3"/>`
-        out += `<text x="${(+sx + 3).toFixed(1)}" y="${h - bottom + 26}" fill="#c8c6bd">${esc(b.day)}</text>`
+        if (i > 0) out += `<line x1="${sx}" x2="${sx}" y1="${top}" y2="${ht - bottom + 16}" stroke="#55534e" stroke-width="1" stroke-dasharray="2 3"/>`
+        out += `<text x="${(+sx + 3).toFixed(1)}" y="${ht - bottom + 26}" fill="#c8c6bd">${esc(b.day)}</text>`
       }
-      if (list.length <= 24) out += `<text x="${cx}" y="${h - bottom + 12}" fill="#8f8d85" text-anchor="middle" font-size="9">${esc(b.label)}</text>`
+      if (list.length <= 24) out += `<text x="${cx}" y="${ht - bottom + 12}" fill="#8f8d85" text-anchor="middle" font-size="9">${esc(b.label)}</text>`
     } else if (i % Math.ceil(list.length / 8) === 0) {
-      out += `<text x="${cx}" y="${h - bottom + 14}" fill="#8f8d85" text-anchor="middle">${esc(b.label)}</text>`
+      out += `<text x="${cx}" y="${ht - bottom + 14}" fill="#8f8d85" text-anchor="middle">${esc(b.label)}</text>`
     }
   })
   if (showBrake) out += `<line x1="${left}" x2="${width - 4}" y1="${y(CFG.brakeAt)}" y2="${y(CFG.brakeAt)}" stroke="#ef4444" stroke-width="1" stroke-dasharray="4 3"/>`
   let lx = left
   for (const [title, c] of [...legend].slice(0, 4)) {
     const label = title.length > 22 ? `${title.slice(0, 21)}…` : title
-    out += `<rect x="${lx}" y="${h - 10}" width="8" height="8" rx="2" fill="${c}"/><text x="${lx + 11}" y="${h - 3}" fill="#c8c6bd">${esc(label)}</text>`
+    out += `<rect x="${lx}" y="${ht - 10}" width="8" height="8" rx="2" fill="${c}"/><text x="${lx + 11}" y="${ht - 3}" fill="#c8c6bd">${esc(label)}</text>`
     lx += 14 + label.length * 5.6
     if (lx > width - 60) break
   }
@@ -305,7 +305,7 @@ function historyChart(list: Bucket[], width: number, showBrake: boolean) {
 // Uso semanal en su periodo real (del inicio al reinicio semanal), con días marcados y
 // la proyección lineal al ritmo actual; hit = cuándo llegaría al 100 % antes del reinicio.
 function weeklyChart(list: HistoryBlock[], width: number, endIso: string, now: number, current: number | null): { svg: string; hit: number | null } {
-  const h = 130, top = 10, bottom = 22, left = 30, right = 8, plot = h - top - bottom
+  const ht = 130, top = 10, bottom = 22, left = 30, right = 8, plot = ht - top - bottom
   const end = Date.parse(endIso), start = end - SEVEN_DAYS
   const x = (t: number) => left + ((Math.min(end, Math.max(start, t)) - start) / SEVEN_DAYS) * (width - left - right)
   const y = (pct: number) => top + plot - (Math.min(100, pct) / 100) * plot
@@ -314,21 +314,21 @@ function weeklyChart(list: HistoryBlock[], width: number, endIso: string, now: n
     .map(b => ({ t: Math.min(now, Date.parse(b.resetsAt)), v: b.weekly! }))
   if (current !== null) pts.push({ t: now, v: current })
   pts.sort((a, b) => a.t - b.t)
-  let out = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${h}" viewBox="0 0 ${width} ${h}" font-family="sans-serif" font-size="10">`
+  let out = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${ht}" viewBox="0 0 ${width} ${ht}" font-family="sans-serif" font-size="10">`
   for (const g of [0, 50, 100]) {
     out += `<line x1="${left}" x2="${width - right}" y1="${y(g)}" y2="${y(g)}" stroke="#3a3936" stroke-width="1"/><text x="${left - 4}" y="${y(g) + 3}" fill="#8f8d85" text-anchor="end">${g}</text>`
   }
   // Medianoches dentro del periodo: separador y nombre del día que empieza.
   const d = new Date(start)
   d.setHours(24, 0, 0, 0)
-  out += `<text x="${left + 2}" y="${h - 6}" fill="#c8c6bd">${esc(dayName(new Date(start).toISOString()))}</text>`
+  out += `<text x="${left + 2}" y="${ht - 6}" fill="#c8c6bd">${esc(dayName(new Date(start).toISOString()))}</text>`
   for (; d.getTime() < end; d.setDate(d.getDate() + 1)) {
     const sx = x(d.getTime()).toFixed(1)
-    out += `<line x1="${sx}" x2="${sx}" y1="${top}" y2="${h - bottom + 4}" stroke="#55534e" stroke-width="1" stroke-dasharray="2 3"/>`
-    if (x(d.getTime()) < width - right - 24) out += `<text x="${(+sx + 3).toFixed(1)}" y="${h - 6}" fill="#c8c6bd">${esc(dayName(d.toISOString()))}</text>`
+    out += `<line x1="${sx}" x2="${sx}" y1="${top}" y2="${ht - bottom + 4}" stroke="#55534e" stroke-width="1" stroke-dasharray="2 3"/>`
+    if (x(d.getTime()) < width - right - 24) out += `<text x="${(+sx + 3).toFixed(1)}" y="${ht - 6}" fill="#c8c6bd">${esc(dayName(d.toISOString()))}</text>`
   }
   const nx = x(now).toFixed(1)
-  out += `<line x1="${nx}" x2="${nx}" y1="${top}" y2="${h - bottom}" stroke="#8f8d85" stroke-width="1"/>`
+  out += `<line x1="${nx}" x2="${nx}" y1="${top}" y2="${ht - bottom}" stroke="#8f8d85" stroke-width="1"/>`
   let hit: number | null = null
   const last = pts[pts.length - 1]
   if (last && last.t > start && last.v > 0) {
