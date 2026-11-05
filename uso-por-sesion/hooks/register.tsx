@@ -19,6 +19,8 @@ const warnedFor = atom({ plugin: 'uso-por-sesion', key: 'warnedFor' } as const, 
 const selected = atom({ plugin: 'uso-por-sesion', key: 'selected' } as const, '')
 const histRange = atom({ plugin: 'uso-por-sesion', key: 'histRange' } as const, 'semana')
 const histSession = atom({ plugin: 'uso-por-sesion', key: 'histSession' } as const, '')
+// Agrupación en semana y mes: 'bloque' (ventana de 5 h), 'dia' o '' (automático según el periodo).
+const histGroup = atom({ plugin: 'uso-por-sesion', key: 'histGroup' } as const, '')
 const cfgTab = atom({ plugin: 'uso-por-sesion', key: 'cfgTab' } as const, 'sesiones')
 // Sesión cuyo botón ∞ espera el segundo toque de confirmación ('' = ninguna).
 const armed = atom({ plugin: 'uso-por-sesion', key: 'armed' } as const, '')
@@ -132,21 +134,34 @@ const shortDay = (iso: string) => {
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
-type Bucket = { label: string; tip: string; total: number; parts: { title: string; pct: number }[] }
+const DOW = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb']
+const dayName = (iso: string) => {
+  const d = new Date(iso)
+  return `${DOW[d.getDay()]} ${d.getDate()}`
+}
+const dayKey = (iso: string) => {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+}
+
+// day: día al que pertenece la barra; donde cambia, el gráfico traza un separador con su nombre.
+type Bucket = { label: string; tip: string; total: number; parts: { title: string; pct: number }[]; day?: string }
 
 // Agrupa el historial según el periodo: bloques (semana), días (mes), semanas (año) o meses (histórico).
 // Fuera de "semana" el valor es la suma de % de bloque: 150 % = un bloque y medio gastado.
-function bucketize(all: HistoryBlock[], range: string, who: string): { buckets: Bucket[]; unit: string } {
+function bucketize(all: HistoryBlock[], range: string, who: string, group = ''): { buckets: Bucket[]; unit: string } {
   const now = Date.now()
   const days = range === 'semana' ? 7 : range === 'mes' ? 31 : range === 'año' ? 366 : Infinity
   const list = all.filter(b => now - Date.parse(b.resetsAt) < days * 86400e3).slice().reverse()
   const pick = (b: HistoryBlock) => (who ? b.top.filter(t => t.title === who) : b.top)
   const value = (b: HistoryBlock) => (who ? pick(b).reduce((a, t) => a + t.pct, 0) : b.pct)
-  if (range === 'semana') {
+  const byBlock = range === 'semana' ? group !== 'dia' : range === 'mes' && group === 'bloque'
+  if (byBlock) {
     return {
-      unit: who ? `Bloques de 5 h · % del límite usado por ${who}` : 'Bloques de 5 h · % del límite',
+      unit: who ? `Ventanas de 5 h · % del límite usado por ${who}` : 'Ventanas de 5 h · % del límite',
       buckets: list.map(b => ({
-        label: shortDay(b.resetsAt),
+        label: hhmm(b.resetsAt),
+        day: dayName(b.resetsAt),
         tip: `${shortDay(b.resetsAt)} ${hhmm(new Date(Date.parse(b.resetsAt) - FIVE_HOURS).toISOString())}–${hhmm(b.resetsAt)} · ${fmt(value(b))} %`,
         total: value(b),
         parts: pick(b),
@@ -155,7 +170,7 @@ function bucketize(all: HistoryBlock[], range: string, who: string): { buckets: 
   }
   const keyOf = (iso: string) => {
     const d = new Date(iso)
-    if (range === 'mes') return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+    if (range === 'mes' || range === 'semana') return dayKey(iso)
     if (range === 'año') {
       const monday = new Date(d)
       monday.setDate(d.getDate() - ((d.getDay() + 6) % 7))
@@ -168,10 +183,10 @@ function bucketize(all: HistoryBlock[], range: string, who: string): { buckets: 
   for (const b of list) {
     const k = keyOf(b.resetsAt)
     const d = new Date(b.resetsAt)
-    const label = range === 'todo' ? `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}` : range === 'año' ? `sem ${shortDay(b.resetsAt)}` : shortDay(b.resetsAt)
+    const label = range === 'todo' ? `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}` : range === 'año' ? `sem ${shortDay(b.resetsAt)}` : dayName(b.resetsAt)
     const g = groups.get(k) ?? { label, tip: '', total: 0, parts: [] }
     g.total += value(b)
-    if (range === 'mes') {
+    if (range === 'mes' || range === 'semana') {
       for (const t of pick(b)) {
         const prev = g.parts.find(x => x.title === t.title)
         if (prev) prev.pct += t.pct
@@ -185,13 +200,13 @@ function bucketize(all: HistoryBlock[], range: string, who: string): { buckets: 
     parts: g.parts.sort((a, b) => b.pct - a.pct).slice(0, 5),
     tip: `${g.label} · ${fmt(g.total)} % de bloque (≈ ${fmt(g.total / 100)} bloques)`,
   }))
-  const per = range === 'mes' ? 'día' : range === 'año' ? 'semana' : 'mes'
+  const per = range === 'mes' || range === 'semana' ? 'día' : range === 'año' ? 'semana' : 'mes'
   return { unit: `Uso por ${per} · suma de % de bloque${who ? ` de ${who}` : ''}`, buckets }
 }
 
 // Barras apiladas: cada sesión con su color, el resto en gris; con freno, línea al 83 %.
 function historyChart(list: Bucket[], width: number, showBrake: boolean) {
-  const h = 210, top = 10, bottom = 34, left = 34, plot = h - top - bottom
+  const h = 222, top = 14, bottom = 46, left = 34, plot = h - top - bottom
   const max = Math.max(100, ...list.map(b => b.total))
   const step = (width - left - 8) / list.length
   const bw = Math.max(4, Math.min(28, step * 0.7))
@@ -219,11 +234,24 @@ function historyChart(list: Bucket[], width: number, showBrake: boolean) {
     }
     seg(Math.max(0, b.total - acc), '#5f5e5a')
     out += `<title>${esc(tip)}</title></g>`
-    if (i % Math.ceil(list.length / 8) === 0) {
-      out += `<text x="${(x + bw / 2).toFixed(1)}" y="${h - bottom + 14}" fill="#8f8d85" text-anchor="middle">${esc(b.label)}</text>`
+    const cx = (x + bw / 2).toFixed(1)
+    // Con pocas barras, el valor va escrito encima (el desktop no muestra tooltips).
+    if (list.length <= 16 && b.total > 0) {
+      out += `<text x="${cx}" y="${(y(b.total) - 3).toFixed(1)}" fill="#c8c6bd" text-anchor="middle" font-size="9">${fmt(b.total)}</text>`
+    }
+    if (b.day !== undefined) {
+      // Barras por ventana de 5 h: separador y nombre del día donde empieza uno nuevo.
+      if (b.day !== list[i - 1]?.day) {
+        const sx = (left + i * step).toFixed(1)
+        if (i > 0) out += `<line x1="${sx}" x2="${sx}" y1="${top}" y2="${h - bottom + 16}" stroke="#55534e" stroke-width="1" stroke-dasharray="2 3"/>`
+        out += `<text x="${(+sx + 3).toFixed(1)}" y="${h - bottom + 26}" fill="#c8c6bd">${esc(b.day)}</text>`
+      }
+      if (list.length <= 24) out += `<text x="${cx}" y="${h - bottom + 12}" fill="#8f8d85" text-anchor="middle" font-size="9">${esc(b.label)}</text>`
+    } else if (i % Math.ceil(list.length / 8) === 0) {
+      out += `<text x="${cx}" y="${h - bottom + 14}" fill="#8f8d85" text-anchor="middle">${esc(b.label)}</text>`
     }
   })
-  if (showBrake) out += `<line x1="${left}" x2="${width - 4}" y1="${y(83)}" y2="${y(83)}" stroke="#ef4444" stroke-width="1" stroke-dasharray="4 3"/>`
+  if (showBrake) out += `<line x1="${left}" x2="${width - 4}" y1="${y(CFG.brakeAt)}" y2="${y(CFG.brakeAt)}" stroke="#ef4444" stroke-width="1" stroke-dasharray="4 3"/>`
   let lx = left
   for (const [title, c] of [...legend].slice(0, 4)) {
     const label = title.length > 22 ? `${title.slice(0, 21)}…` : title
@@ -236,7 +264,7 @@ function historyChart(list: Bucket[], width: number, showBrake: boolean) {
 
 // Línea del uso semanal, un punto por bloque.
 function weeklyChart(list: HistoryBlock[], width: number) {
-  const h = 120, top = 10, bottom = 18, left = 30, plot = h - top - bottom
+  const h = 130, top = 10, bottom = 22, left = 30, plot = h - top - bottom
   const pts = list.map((b, i) => ({ i, v: b.weekly })).filter((p): p is { i: number; v: number } => p.v !== null)
   const step = (width - left - 8) / Math.max(1, list.length - 1)
   const x = (i: number) => left + i * step
@@ -245,6 +273,12 @@ function weeklyChart(list: HistoryBlock[], width: number) {
   for (const g of [0, 50, 100]) {
     out += `<line x1="${left}" x2="${width - 4}" y1="${y(g)}" y2="${y(g)}" stroke="#3a3936" stroke-width="1"/><text x="${left - 4}" y="${y(g) + 3}" fill="#8f8d85" text-anchor="end">${g}</text>`
   }
+  list.forEach((b, i) => {
+    if (i > 0 && dayKey(b.resetsAt) === dayKey(list[i - 1]!.resetsAt)) return
+    const sx = i === 0 ? x(0) : (x(i - 1) + x(i)) / 2
+    if (i > 0) out += `<line x1="${sx.toFixed(1)}" x2="${sx.toFixed(1)}" y1="${top}" y2="${h - bottom + 4}" stroke="#55534e" stroke-width="1" stroke-dasharray="2 3"/>`
+    out += `<text x="${(sx + 3).toFixed(1)}" y="${h - 6}" fill="#c8c6bd">${esc(dayName(b.resetsAt))}</text>`
+  })
   if (pts.length) {
     const path = pts.map((p, k) => `${k ? 'L' : 'M'}${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')
     out += `<path d="${path} L${x(pts[pts.length - 1]!.i).toFixed(1)},${y(0)} L${x(pts[0]!.i).toFixed(1)},${y(0)} Z" fill="#a855f7" opacity="0.15"/>`
@@ -764,7 +798,10 @@ export const register: Register = on => {
     const range = await read($, histRange)
     const perSession = range === 'semana' || range === 'mes'
     const who = perSession ? await read($, histSession) : ''
-    const { buckets, unit } = bucketize(all, range, who)
+    const groupPick = await read($, histGroup)
+    const group = groupPick || (range === 'semana' ? 'bloque' : 'dia')
+    const { buckets, unit } = bucketize(all, range, who, group)
+    const byBlock = perSession && group === 'bloque'
     const titles = [...new Set(all.filter(b => Date.now() - Date.parse(b.resetsAt) < 31 * 86400e3).flatMap(b => b.top.map(t => t.title)))]
     const width = Math.max(260, Math.min(900, (e.props.bodyColumns ?? 60) * 8))
     const ranges = [
@@ -782,6 +819,10 @@ export const register: Register = on => {
             <Select key="who" label="Sesión" options={[{ value: '', label: 'Todas' }, ...titles.map(t => ({ value: t, label: t.length > 30 ? `${t.slice(0, 29)}…` : t }))]}
               value={who} onSelect={v => void update($, histSession, () => v)} />
           )}
+          {Select && perSession && (
+            <Select key="group" label="Agrupar" options={[{ value: 'bloque', label: 'Por ventana de 5 h' }, { value: 'dia', label: 'Por día' }]}
+              value={group} onSelect={v => void update($, histGroup, () => v)} />
+          )}
         </Box>
         {!perSession && <Text size="caption" dimColor>El detalle por sesión está disponible hasta el último mes.</Text>}
         {buckets.length === 0 || !Svg ? (
@@ -789,14 +830,15 @@ export const register: Register = on => {
         ) : (
           <Box flexDirection="column" gap="sm">
             <Text size="caption" weight="medium">{unit}</Text>
-            <Svg source={historyChart(buckets, width, range === 'semana')} alt="Uso en el periodo" width={width} height={210} isInteractive />
+            <Svg source={historyChart(buckets, width, byBlock)} alt="Uso en el periodo" width={width} height={222} isInteractive />
             {range === 'semana' && (
               <Box flexDirection="column" gap="sm">
                 <Text size="caption" weight="medium">Semanal · % acumulado</Text>
-                <Svg source={weeklyChart(all.filter(b => Date.now() - Date.parse(b.resetsAt) < 7 * 86400e3).reverse(), width)} alt="Uso semanal en el tiempo" width={width} height={120} isInteractive />
+                <Svg source={weeklyChart(all.filter(b => Date.now() - Date.parse(b.resetsAt) < 7 * 86400e3).reverse(), width)} alt="Uso semanal en el tiempo" width={width} height={130} isInteractive />
               </Box>
             )}
-            <Text size="caption" dimColor>Pasa el cursor sobre una barra para ver el detalle.{range === 'semana' ? ' Línea roja: freno del 83 %.' : ''}</Text>
+            {byBlock && <Text size="caption" dimColor>Cada barra es una ventana de 5 h, rotulada con la hora en que se reinició; las líneas punteadas separan los días. Línea roja: freno del {CFG.brakeAt} %.</Text>}
+            {!byBlock && perSession && <Text size="caption" dimColor>Cada barra suma los % de las ventanas de 5 h de ese día: 150 % equivale a una ventana y media gastada.</Text>}
           </Box>
         )}
       </Box>

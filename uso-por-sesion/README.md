@@ -49,8 +49,9 @@ En **⚙ Configuración → Ajustes** cada persona ajusta con − / +:
 
 - **Periodo:** última semana (barras por bloque de 5 h, con la línea del freno y el gráfico semanal), último mes (por día), último año (por semana) o histórico (por mes).
 - **Sesión:** filtra para ver solo una sesión; disponible en semana y mes.
+- **Agrupar** (semana y mes): **por ventana de 5 h** (cada barra rotulada con su hora de reinicio y líneas punteadas entre días) o **por día**.
+- Los días van marcados con su nombre (lun 3, mar 4…) también en el gráfico semanal. Con pocas barras, el valor va escrito encima de cada una.
 - Fuera de la semana, cada barra suma los % de bloque del periodo: 150 % equivale a un bloque y medio gastado.
-- Pasa el cursor sobre una barra para ver el detalle por sesión.
 
 ## Qué significa cada cosa
 
