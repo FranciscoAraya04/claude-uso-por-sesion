@@ -1,6 +1,6 @@
 export type BrakeTest = { pct: number; resetsAt: string }
 
-export type SessionShare = { id: string; title: string; pct: number; cap?: number; paused?: boolean; bypass?: boolean }
+export type SessionShare = { id: string; title: string; pct: number; cap?: number; paused?: boolean; bypass?: boolean; stop?: 'pausa' | 'tope' | 'freno'; until?: string }
 export type HistoryBlock = { resetsAt: string; pct: number; weekly: number | null; top: { title: string; pct: number }[] }
 
 export type Snapshot = {

@@ -1,6 +1,6 @@
 {
   "name": "uso-por-sesion",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Per-session budgets and an auto-brake for parallel Claude Code sessions sharing the 5-hour limit",
   "license": "MIT",
   "author": {

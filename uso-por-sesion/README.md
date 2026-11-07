@@ -25,7 +25,7 @@ No envía nada fuera de tu computador. Solo ejecuta `node hooks/scan.js` para le
 
 | Comando | Qué hace |
 | --- | --- |
-| `/uso` | Oculta o muestra la franja (también la ✕ de la franja). |
+| `/uso` | Oculta o muestra la franja (también: ⚙ → Ajustes → **Ocultar franja**). |
 | `/uso-limite 40` | Tope para **esta** sesión: 40 % del bloque de 5 h. Al llegar, se frena sola. Toda sesión parte con **35 %**. |
 | `/uso-limite` | Muestra el tope actual de esta sesión. |
 | `/uso-limite quitar` | Quita el tope de esta sesión. |
@@ -48,7 +48,10 @@ Los comandos con número o texto (`/uso-limite 30`, `/uso-pausar 3`): presiona *
 
 - En cada fila: **−** / **+** bajan o suben el tope de esa sesión según el paso configurado (10 % por defecto) (bajo 10 % queda sin tope), **⏸** / **▶** la pausan o reanudan, Cuando el tope llega a 100 % (o la sesión no tiene tope), el **+** se convierte en **∞**: dejarla sin freno global. Con ∞ activo, **−** lo quita. Si ya está el máximo de sesiones ∞, los demás ∞ quedan tenues.
 - Si no caben todas, la franja muestra las que caben y **Ver todas** abre la pestaña **Sesiones** del panel, con la lista completa y los mismos botones.
-- Al pie: **⏸ Todas**, **▶ Todas**, **⚙ Configuración**, y **Continuar** cuando esta sesión está frenada.
+- Si una sesión está detenida, su fila dice por qué (**Pausada por ti**, **Frenada: llegó a su tope** o **Frenada: el bloque llegó al 83 %**, con la hora en que se reanuda sola) y su botón pasa a **▶ Reanudar**: quita la pausa o la libera hasta el reinicio.
+- El desglose muestra las sesiones que más gastan y siempre incluye la actual (al final, con su número, si no está entre ellas).
+- **⚙** (en la franja, donde antes estaba la ✕) abre el panel. **Pausar todas** y **Reanudar todas** están en la pestaña **Sesiones**; **Ocultar franja**, en **Ajustes**.
+- Al pie aparece **Continuar** cuando esta sesión está frenada.
 
 ## Configuración
 

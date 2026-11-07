@@ -44,7 +44,7 @@ The English commands (`/session-…`) and the Spanish ones (`/uso-…`) work the
 
 | Command | Spanish | What it does |
 | --- | --- | --- |
-| `/session-usage` | `/uso` | Hide or show the band (also the ✕ on it). |
+| `/session-usage` | `/uso` | Hide or show the band (also ⚙ → Settings → Hide band). |
 | `/session-limit 40` | `/uso-limite 40` | Cap **this** session at 40 % of the 5-hour block. With no number, shows the cap; `remove` clears it. |
 | `/session-pause [n \| all]` | `/uso-pausar` | Pause this session, session n of the breakdown, or all of them. |
 | `/session-resume [n \| all]` | `/uso-reanudar` | Resume. Sessions that were working pick up on their own within a minute. |
@@ -58,8 +58,10 @@ For commands with an argument, press **Esc** before Enter to close the suggestio
 
 ## Buttons
 
-- **Each session row:** **−** / **+** change its cap by the configured step (10 % by default). At 100 % (or with no cap), **+** turns into **∞**; with ∞ on, **−** removes it. **⏸** / **▶** pause or resume it.
-- **Footer:** ⏸ All, ▶ All, ⚙ Settings, and Continue while this session is braked.
+- **Each session row:** **−** / **+** change its cap by the configured step (10 % by default). At 100 % (or with no cap), **+** turns into **∞**; with ∞ on, **−** removes it. **⏸** pauses it.
+- **Stopped sessions** say why (paused by you, reached its cap, or the block reached the brake, with the time it resumes on its own), and their button becomes **▶ Resume**.
+- The breakdown always includes the current session, even when it isn't among the top spenders.
+- **⚙** on the band opens the panel. **Pause all** / **Resume all** are in the Sessions tab, **Hide band** in Settings. **Continue** appears on the band while this session is braked.
 - If the rows don't fit, the band shows the ones that do, and **See all** opens the Sessions tab.
 
 ## Settings

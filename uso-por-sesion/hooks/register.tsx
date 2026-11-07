@@ -428,13 +428,29 @@ async function refresh($: $T) {
     ...(await extra(s.id)),
   })))
   if (!shares.some(s => s.id === me)) shares.push({ id: me, title: L('Esta sesión', 'This session'), pct: 0, ...(await extra(me)) })
+  // Por qué está detenida cada sesión (mismas reglas que stopReason) y desde cuándo se reanuda sola.
+  if (five.resetsAt) {
+    const until = new Date(Date.parse(five.resetsAt) + resumeMargin()).toISOString()
+    const approved = sameBlock(await $.store.get(APPROVED_KEY), five.resetsAt)
+    for (const sh of shares) {
+      const ok = (k: string) => $.store.get(k).then(v => sameBlock(v, five.resetsAt))
+      let stop: 'pausa' | 'tope' | 'freno' | undefined
+      if (sh.paused) stop = 'pausa'
+      else if (sh.bypass ? five.percentUsed >= 100 - CFG.closeMargin : five.percentUsed >= CFG.brakeAt && !approved && !(await ok(brakeOkKey(sh.id)))) stop = 'freno'
+      else if (sh.cap !== undefined && sh.pct >= Math.max(0, sh.cap - CFG.closeMargin) && !(await ok(capOkKey(sh.id)))) stop = 'tope'
+      if (stop) Object.assign(sh, { stop, ...(stop === 'pausa' ? {} : { until }) })
+    }
+  }
+  // Se guardan 8; si esta sesión no entra, ocupa el último lugar.
+  const kept = shares.slice(0, 8)
+  if (!kept.some(s => s.id === me)) kept[kept.length - 1] = shares.find(s => s.id === me)!
   const next: Snapshot = {
     fiveHour: five.percentUsed,
     resetsAt: five.resetsAt ?? null,
     weekly: week?.percentUsed ?? null,
     weeklyResetsAt: week?.resetsAt ?? null,
     current: shares.find(s => s.id === me)?.pct ?? 0,
-    sessions: shares.slice(0, 8),
+    sessions: kept,
   }
   await update($, snapshot, () => next)
   if (next.resetsAt) await recordHistory($, next)
@@ -558,7 +574,50 @@ async function maybeResume($: $T) {
 async function setPaused($: $T, id: string, paused: boolean) {
   if (paused) await $.store.set(pauseKey(id), true)
   else await $.store.delete(pauseKey(id))
-  await patchRow($, id, s => ({ ...s, paused }))
+  await patchRow($, id, s => {
+    const { stop: _s, until: _u, ...rest } = s
+    return paused ? { ...rest, paused, stop: 'pausa' as const } : { ...rest, paused }
+  })
+  void refresh($).catch(() => {})
+  await maybeResume($)
+  await syncStop($)
+}
+
+// Reanuda una sesión detenida desde su botón: quita la pausa o la libera del freno y del tope hasta el reinicio.
+async function releaseSession($: $T, id: string) {
+  const snap = await read($, snapshot)
+  const row = snap?.sessions.find(s => s.id === id)
+  if (row?.stop === 'pausa' || !snap?.resetsAt) return setPaused($, id, false)
+  await $.store.set(brakeOkKey(id), snap.resetsAt)
+  await $.store.set(capOkKey(id), snap.resetsAt)
+  await patchRow($, id, s => {
+    const { stop: _s, until: _u, ...rest } = s
+    return rest
+  })
+  void refresh($).catch(() => {})
+  await maybeResume($)
+  await syncStop($)
+}
+
+// Pausa todas, o las reanuda todas: quita pausas y libera freno y topes hasta el reinicio.
+async function setAll($: $T, paused: boolean) {
+  const snap = await read($, snapshot)
+  const list = snap?.sessions ?? []
+  for (const s of list) {
+    if (paused) await $.store.set(pauseKey(s.id), true)
+    else {
+      await $.store.delete(pauseKey(s.id))
+      if (snap?.resetsAt) {
+        await $.store.set(brakeOkKey(s.id), snap.resetsAt)
+        await $.store.set(capOkKey(s.id), snap.resetsAt)
+      }
+    }
+  }
+  if (!paused && snap?.resetsAt) await $.store.set(APPROVED_KEY, snap.resetsAt)
+  await update($, snapshot, sn => (sn ? { ...sn, sessions: sn.sessions.map(s => {
+    const { stop: _s, until: _u, ...rest } = s
+    return paused ? { ...rest, paused: true, stop: 'pausa' as const } : { ...rest, paused: false }
+  }) } : sn))
   void refresh($).catch(() => {})
   await maybeResume($)
   await syncStop($)
@@ -712,6 +771,15 @@ const cmdUso: Hook<'command.run'> = async $ => {
   return { text: hidden ? L(`Franja de uso oculta. Escribe ${C('uso')} para volver a mostrarla.`, `Usage band hidden. Type ${C('uso')} to show it again.`) : L('Franja de uso visible.', 'Usage band visible.') }
 }
 
+// Etiqueta de una sesión detenida y su color.
+function stopLabel(s: { stop?: string; until?: string }): { text: string; color: string } | null {
+  const at = s.until ? hhmm(s.until) : ''
+  if (s.stop === 'pausa') return { text: L('Pausada por ti', 'Paused by you'), color: '#facc15' }
+  if (s.stop === 'tope') return { text: L(`Frenada: llegó a su tope · reanuda sola a las ${at}`, `Braked: reached its cap · resumes on its own at ${at}`), color: '#ef4444' }
+  if (s.stop === 'freno') return { text: L(`Frenada: el bloque llegó al ${CFG.brakeAt} % · reanuda sola a las ${at}`, `Braked: the block reached ${CFG.brakeAt} % · resumes on its own at ${at}`), color: '#ef4444' }
+  return null
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
@@ -810,14 +878,20 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column" gap="sm">
           {tabs}
-          <Text size="caption" dimColor>{L(`Bloque de 5 h: ${fmt(snap.fiveHour)} % usado · se reinicia a las ${hhmm(snap.resetsAt)}`, `5-hour block: ${fmt(snap.fiveHour)} % used · resets at ${hhmm(snap.resetsAt)}`)}</Text>
+          <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap="sm" minHeight={2}>
+            <Text size="caption" dimColor>{L(`Bloque de 5 h: ${fmt(snap.fiveHour)} % usado · se reinicia a las ${hhmm(snap.resetsAt)}`, `5-hour block: ${fmt(snap.fiveHour)} % used · resets at ${hhmm(snap.resetsAt)}`)}</Text>
+            <Box flexGrow={1} />
+            <Button key="pause-all" label={L('⏸ Pausar todas', '⏸ Pause all')} onPress={() => void setAll($, true)} />
+            <Button key="resume-all" label={L('▶ Reanudar todas', '▶ Resume all')} onPress={() => void setAll($, false)} />
+          </Box>
           {snap.sessions.map((s, i) => {
             const atMax = s.cap === undefined || s.cap >= 100
+            const tag = stopLabel(s)
             return (
               <Box key={s.id} flexDirection="column" gap="xs">
                 <Box flexDirection="row" gap="sm">
                   <Text size="caption" weight={s.id === me || s.bypass ? 'medium' : 'regular'} dimColor={s.id !== me && !s.bypass} color={s.bypass ? CLAY : undefined} wrap="truncate">
-                    {i + 1}. {s.paused ? '⏸ ' : ''}{s.bypass ? '∞ ' : ''}{s.title}
+                    {i + 1}. {s.bypass ? '∞ ' : ''}{s.title}
                   </Text>
                 </Box>
                 <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
@@ -832,8 +906,11 @@ export const register: Register = on => {
                     : atMax && CFG.maxBypass > 0
                     ? <Button key={`pup-${s.id}`} label={s.bypass ? L('∞ activo', '∞ on') : '∞'} variant={s.bypass ? 'primary' : undefined} onPress={() => void (s.bypass ? undefined : toggleBypass($, s.id))} />
                     : <Button key={`pup-${s.id}`} label="+" onPress={() => void stepCap($, s.id, 1)} />}
-                  <Button key={`pp-${s.id}`} label={s.paused ? '▶' : '⏸'} onPress={() => void setPaused($, s.id, !s.paused)} />
+                  {s.stop
+                    ? <Button key={`pp-${s.id}`} label={L('▶ Reanudar', '▶ Resume')} variant="primary" onPress={() => void releaseSession($, s.id)} />
+                    : <Button key={`pp-${s.id}`} label="⏸" onPress={() => void setPaused($, s.id, true)} />}
                 </Box>
+                {tag && <Text size="caption" color={tag.color} wrap="truncate">{tag.text}</Text>}
               </Box>
             )
           })}
@@ -882,6 +959,12 @@ export const register: Register = on => {
           <Box flexDirection="row" gap="sm">
             <Button key="cfg-reset" label={L('Restaurar valores por defecto', 'Restore defaults')} onPress={() => void $.store.set(CFG_KEY, { ...DEFAULTS, lang: CFG.lang }).then(() => set('brakeAt', DEFAULTS.brakeAt))} />
           </Box>
+          <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
+            <Text weight="medium">{L('Franja sobre el chat', 'Band above the chat')}</Text>
+            <Box flexGrow={1} />
+            <Button key="hide-band" label={L('Ocultar franja', 'Hide band')} onPress={() => void update($, isMin, () => true).then(() => $.ui.toast(L(`Franja oculta. Escribe ${C('uso')} para volver a mostrarla.`, `Band hidden. Type ${C('uso')} to show it again.`)))} />
+          </Box>
+          <Text size="caption" dimColor>{L(`Para volver a mostrarla, escribe ${C('uso')}.`, `To show it again, type ${C('uso')}.`)}</Text>
           <Text size="caption" dimColor>{L('Los ajustes valen para todas tus sesiones y llegan a las demás en menos de un minuto.', 'Settings apply to all your sessions and reach the others in under a minute.')}</Text>
         </Box>
       )
@@ -889,7 +972,7 @@ export const register: Register = on => {
     if (tab === 'ayuda') {
       const any = L('[n° | todas]', '[n | all]')
       const help: [string, string][] = [
-        [C('uso'), L('Oculta o muestra la franja (también la ✕).', 'Hides or shows the band (so does ✕).')],
+        [C('uso'), L('Oculta o muestra la franja (también: Ajustes → Ocultar franja).', 'Hides or shows the band (also: Settings → Hide band).')],
         [C('uso-config'), L('Abre este panel.', 'Opens this pane.')],
         [C('uso-historial'), L('Abre el panel en el historial.', 'Opens the pane on the history.')],
         [`${C('uso-limite')} 30`, L('Tope de esta sesión en % del bloque de 5 h.', "This session's cap as % of the 5-hour block.")],
@@ -1007,7 +1090,6 @@ export const register: Register = on => {
     const now = await read($, nowMs)
     const braked = await read($, isBraked)
     const resume = await read($, resumeAt)
-    const minimize = () => update($, isMin, v => !v)
 
     if (await read($, isMin)) {
       return next(e)
@@ -1018,7 +1100,17 @@ export const register: Register = on => {
     const bypassFull = snap.sessions.filter(s => s.bypass).length >= CFG.maxBypass
     const mode = cols >= 95 ? 'wide' : cols >= 65 ? 'mid' : 'narrow'
     const perRow = mode === 'narrow' ? 3 : 2
-    const fit = Math.max(1, Math.min(snap.sessions.length, Math.floor(((e.props.maxRows ?? 40) - 8) / perRow)))
+    // Filas que caben (una detenida usa una línea más); la sesión actual siempre entra, en el último lugar si no es de las que más gastan.
+    const budget = (e.props.maxRows ?? 40) - 7
+    let fit = 0
+    for (let used = 0; fit < snap.sessions.length; fit++) {
+      used += perRow + (snap.sessions[fit]!.stop ? 1 : 0)
+      if (used > budget) break
+    }
+    fit = Math.max(1, fit)
+    const myIdx = snap.sessions.findIndex(s => s.id === me)
+    const rows = snap.sessions.map((s, i) => ({ s, i })).filter(({ i }) => i < fit)
+    if (myIdx >= fit) rows[rows.length - 1] = { s: snap.sessions[myIdx]!, i: myIdx }
     const W = { wide: { head: 24, row: 16, name: 36, title: 34 }, mid: { head: 14, row: 10, name: 24, title: 22 }, narrow: { head: 8, row: 10, name: 0, title: 30 } }[mode]
     const cut = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
     const cells = (pct: number, width: number) => Math.max(0, Math.min(width, Math.round((pct / 100) * width)))
@@ -1070,15 +1162,16 @@ export const register: Register = on => {
               </Box>
             )
           })()}
-          <Button key="min" label="✕" onPress={minimize} />
+          <Button key="config" label="⚙" onPress={() => void update($, cfgTab, () => 'ajustes').then(() => $.ui.open({ id: HISTORY_PANE, title: paneTitle() }))} />
           <Button key="toggle" label={open ? '⌄' : '›'} onPress={toggle} />
         </Box>
         {open && (
           <Box flexDirection="column" gap="xs" paddingTop="xs">
-            {snap.sessions.slice(0, fit).map((s, i) => {
+            {rows.map(({ s, i }) => {
+              const tag = stopLabel(s)
               const name = (
                 <Text size="caption" weight={s.id === me || s.bypass ? 'medium' : 'regular'} dimColor={s.id !== me && !s.bypass} color={s.bypass ? CLAY : undefined} wrap="truncate">
-                  {i + 1}. {s.paused ? '⏸ ' : ''}{s.bypass ? '∞ ' : ''}{cut(s.title, W.title)}
+                  {i + 1}. {s.bypass ? '∞ ' : ''}{cut(s.title, W.title)}
                 </Text>
               )
               const bar = track(W.row, (s.pct / scale) * 100, 0, s.id === me && !s.paused, s.cap === undefined ? undefined : (s.cap / scale) * 100)
@@ -1094,29 +1187,36 @@ export const register: Register = on => {
                   : (s.cap === undefined || s.cap >= 100) && CFG.maxBypass > 0
                   ? <Button key={`up-${s.id}`} label={s.bypass ? L('∞ activo', '∞ on') : '∞'} dimColor={!s.bypass && bypassFull} variant={s.bypass ? 'primary' : undefined} onPress={() => void (s.bypass ? undefined : toggleBypass($, s.id))} />
                   : <Button key={`up-${s.id}`} label="+" onPress={() => void stepCap($, s.id, 1)} />,
-                <Button key={`p-${s.id}`} label={s.paused ? '▶' : '⏸'} onPress={() => void setPaused($, s.id, !s.paused)} />,
+                s.stop
+                  ? <Button key={`p-${s.id}`} label={mode === 'narrow' ? '▶' : L('▶ Reanudar', '▶ Resume')} variant="primary" onPress={() => void releaseSession($, s.id)} />
+                  : <Button key={`p-${s.id}`} label="⏸" onPress={() => void setPaused($, s.id, true)} />,
               ]
+              const tagLine = tag && <Text size="caption" color={tag.color} wrap="truncate">{tag.text}</Text>
               if (mode === 'narrow') {
                 return (
                   <Box key={s.id} flexDirection="column">
                     <Box flexDirection="row" gap="sm">{name}<Box flexGrow={1} />{pct}</Box>
                     <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>{bar}<Box flexGrow={1} />{buttons}</Box>
+                    {tagLine}
                   </Box>
                 )
               }
               return (
-                <Box key={s.id} flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
-                  <Box width={W.name}>{name}</Box>
-                  {bar}
-                  {pct}
-                  <Box flexGrow={1} />
-                  {buttons}
+                <Box key={s.id} flexDirection="column">
+                  <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
+                    <Box width={W.name}>{name}</Box>
+                    {bar}
+                    {pct}
+                    <Box flexGrow={1} />
+                    {buttons}
+                  </Box>
+                  {tagLine}
                 </Box>
               )
             })}
-            {snap.sessions.length > fit && (
+            {snap.sessions.length > rows.length && (
               <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
-                <Text size="caption" dimColor>{L(`+${snap.sessions.length - fit} sesiones más`, `+${snap.sessions.length - fit} more sessions`)}</Text>
+                <Text size="caption" dimColor>{L(`+${snap.sessions.length - rows.length} sesiones más`, `+${snap.sessions.length - rows.length} more sessions`)}</Text>
                 <Button key="all" label={L('Ver todas', 'See all')} onPress={() => void update($, cfgTab, () => 'sesiones').then(() => $.ui.open({ id: HISTORY_PANE, title: paneTitle() }))} />
               </Box>
             )}
@@ -1137,13 +1237,12 @@ export const register: Register = on => {
                 </Box>
               )
             })()}
-            <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap="sm" minHeight={2}>
-              <Box flexGrow={1} />
-              <Button key="pause-all" label={L('⏸ Todas', '⏸ Pause all')} onPress={() => void Promise.all(snap.sessions.map(s => $.store.set(pauseKey(s.id), true))).then(() => setPaused($, me, true))} />
-              <Button key="resume-all" label={L('▶ Todas', '▶ Resume all')} onPress={() => void Promise.all(snap.sessions.map(s => $.store.delete(pauseKey(s.id)))).then(() => setPaused($, me, false))} />
-              <Button key="config" label={L('⚙ Configuración', '⚙ Settings')} onPress={() => void update($, cfgTab, () => 'ajustes').then(() => $.ui.open({ id: HISTORY_PANE, title: paneTitle() }))} />
-              {braked && <Button key="continue" label={L('Continuar', 'Continue')} variant="primary" onPress={() => void $.command.run({ command: 'uso-continuar', args: '' })} />}
-            </Box>
+            {braked && (
+              <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
+                <Box flexGrow={1} />
+                <Button key="continue" label={L('Continuar', 'Continue')} variant="primary" onPress={() => void $.command.run({ command: 'uso-continuar', args: '' })} />
+              </Box>
+            )}
           </Box>
         )}
       </Box>

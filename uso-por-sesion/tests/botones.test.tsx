@@ -139,3 +139,55 @@ test('una sesión recién abierta usa los últimos límites guardados', async ($
   expect(await ui.find({ type: 'Text', text: /47 %/ })).toBeTruthy()
   await ui.unmount()
 })
+
+function setup(on: Parameters<Parameters<typeof test>[1]>[1], store: Map<string, unknown>, pct: number, sessions: { id: string; title: string; w: number }[]) {
+  const resetsAt = new Date(Date.now() + 3600e3).toISOString()
+  on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: pct, resetsAt }] } }))
+  on('session.id', () => ({ value: 'yo' }))
+  on('store.get', (_, e) => ({ value: store.get(e.key) }))
+  on('store.set', (_, e) => (store.set(e.key, e.value), { value: undefined }))
+  on('store.delete', (_, e) => (store.delete(e.key), { value: undefined }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ sessions }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: Date.now() }))
+  on('command.run', () => ({ text: '' }))
+  on('prompt.submit', () => ({ value: undefined }))
+  return resetsAt
+}
+
+test('una sesión que llegó a su tope muestra por qué y el botón la reanuda', async ($, on) => {
+  const store = new Map<string, unknown>([['config', { lang: 'es' }], ['tope:otra', 20]])
+  setup(on, store, 50, [{ id: 'otra', title: 'Otra', w: 3 }, { id: 'yo', title: 'Mía', w: 2 }])
+  await $.command.run({ command: 'uso-limite', args: '90' })
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'toggle' })
+  expect(await ui.find({ type: 'Text', text: /llegó a su tope/ })).toBeTruthy()
+  expect(JSON.stringify(await ui.find({ type: 'Button', key: 'p-otra' }))).toContain('Reanudar')
+  expect(JSON.stringify(await ui.find({ type: 'Button', key: 'p-yo' }))).toContain('⏸')
+  await ui.press({ key: 'p-otra' })
+  expect(store.has('tope-ok:otra')).toBe(true)
+  await ui.unmount()
+})
+
+test('una sesión pausada dice "Pausada por ti" y Reanudar quita la pausa', async ($, on) => {
+  const store = new Map<string, unknown>([['config', { lang: 'es' }], ['pausa:otra', true]])
+  setup(on, store, 30, [{ id: 'otra', title: 'Otra', w: 1 }, { id: 'yo', title: 'Mía', w: 1 }])
+  await $.command.run({ command: 'uso-limite', args: '90' })
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'toggle' })
+  expect(await ui.find({ type: 'Text', text: /Pausada por ti/ })).toBeTruthy()
+  await ui.press({ key: 'p-otra' })
+  expect(store.has('pausa:otra')).toBe(false)
+  await ui.unmount()
+})
+
+test('la sesión actual entra al desglose aunque no sea de las que más gastan', async ($, on) => {
+  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
+  setup(on, store, 30, [{ id: 'a', title: 'A', w: 9 }, { id: 'b', title: 'B', w: 8 }, { id: 'c', title: 'C', w: 7 }, { id: 'd', title: 'D', w: 6 }, { id: 'yo', title: 'Mía', w: 1 }])
+  await $.command.run({ command: 'uso-limite', args: '90' })
+  const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, maxRows: 13 } })
+  await ui.press({ key: 'toggle' })
+  expect(await ui.find({ type: 'Text', text: /5\. Mía/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Button', key: 'config' })).toBeTruthy()
+  await ui.unmount()
+})
