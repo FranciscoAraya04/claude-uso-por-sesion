@@ -366,9 +366,26 @@ const fmt = (n: number) => {
 // cualquier sesión (así una sesión recién abierta muestra la franja y respeta el freno desde el inicio).
 type Limits = { five?: { percentUsed: number; resetsAt?: string }; week?: { percentUsed: number; resetsAt?: string } }
 const LAST_LIMITS_KEY = 'ultimo-limite'
+// Sesiones abiertas: { id: { folder, seen } }; una sesión sin señales en 10 min se da por cerrada.
+const ALIVE_KEY = 'activas'
+const ALIVE_MS = 10 * 60000
+type Alive = Record<string, { folder: string; seen: number }>
+
+async function markAlive($: $T, alive: boolean) {
+  const me = await $.session.id()
+  const raw = await $.store.get(ALIVE_KEY)
+  const list: Alive = raw && typeof raw === 'object' ? { ...(raw as Alive) } : {}
+  const now = Date.now()
+  for (const [id, v] of Object.entries(list)) if (now - v.seen > ALIVE_MS) delete list[id]
+  if (alive) {
+    const cwd = await $.session.cwd().catch(() => '')
+    list[me] = { folder: cwd.split(/[\\/]/).filter(Boolean).pop() ?? '', seen: now }
+  } else delete list[me]
+  await $.store.set(ALIVE_KEY, list)
+}
 
 async function rateLimits($: $T): Promise<Limits> {
-  const live = (await $.session.usage()).rateLimits
+  const live = (await $.session.usage().catch(() => ({ rateLimits: [] as { kind: string; percentUsed: number; resetsAt?: string }[] }))).rateLimits
   const five = live.find(r => r.kind === 'five_hour')
   const week = live.find(r => r.kind === 'seven_day')
   if (five) {
@@ -428,6 +445,12 @@ async function refresh($: $T) {
     ...(await extra(s.id)),
   })))
   if (!shares.some(s => s.id === me)) shares.push({ id: me, title: L('Esta sesión', 'This session'), pct: 0, ...(await extra(me)) })
+  // Sesiones abiertas que aún no gastan nada en este bloque (por ejemplo, recién creadas).
+  const aliveRaw = await $.store.get(ALIVE_KEY)
+  for (const [id, v] of Object.entries(aliveRaw && typeof aliveRaw === 'object' ? (aliveRaw as Alive) : {})) {
+    if (shares.some(s => s.id === id) || Date.now() - v.seen > ALIVE_MS) continue
+    shares.push({ id, title: v.folder ? L(`Sesión en ${v.folder}`, `Session in ${v.folder}`) : L('Sesión sin uso aún', 'Session with no usage yet'), pct: 0, ...(await extra(id)) })
+  }
   // Por qué está detenida cada sesión (mismas reglas que stopReason) y desde cuándo se reanuda sola.
   if (five.resetsAt) {
     const until = new Date(Date.parse(five.resetsAt) + resumeMargin()).toISOString()
@@ -807,14 +830,21 @@ export const register: Register = on => {
       await $.command.register({ ...d, name: EN_CMD[d.name] })
     }
     await update($, nowMs, () => Date.now())
+    await markAlive($, true).catch(() => {})
     $.clock.every(60000, async () => {
       await loadCfg($)
+      await markAlive($, true).catch(() => {})
       await update($, nowMs, () => Date.now())
       await refresh($).catch(() => {})
       await maybeResume($).catch(() => {})
     })
     refresh($).catch(err => update($, status, () => `Error: ${String(err).slice(0, 120)}`))
     return result
+  })
+
+  on('session.end', async ($, e, next) => {
+    await markAlive($, false).catch(() => {})
+    return next(e)
   })
 
   on('tool.call', async ($, e, next) => {
@@ -863,7 +893,7 @@ export const register: Register = on => {
     const tabs = (
       <Box flexDirection="row" gap="sm">
         {[['sesiones', L('Sesiones', 'Sessions')], ['ajustes', L('⚙ Ajustes', '⚙ Settings')], ['historial', L('Historial', 'History')], ['ayuda', L('Comandos', 'Commands')]].map(([id, label]) => (
-          <Button key={`tab-${id}`} label={label!} variant={tab === id ? 'primary' : 'secondary'} onPress={() => void update($, cfgTab, () => id!)} />
+          <Button key={`tab-${id}`} label={label!} variant={tab === id ? 'primary' : 'secondary'} onPress={() => void update($, cfgTab, () => id!).then(() => (id === 'sesiones' ? refresh($).catch(() => {}) : undefined))} />
         ))}
       </Box>
     )
@@ -881,6 +911,7 @@ export const register: Register = on => {
           <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap="sm" minHeight={2}>
             <Text size="caption" dimColor>{L(`Bloque de 5 h: ${fmt(snap.fiveHour)} % usado · se reinicia a las ${hhmm(snap.resetsAt)}`, `5-hour block: ${fmt(snap.fiveHour)} % used · resets at ${hhmm(snap.resetsAt)}`)}</Text>
             <Box flexGrow={1} />
+            <Button key="reload" label="↻" onPress={() => void refresh($).catch(() => {})} />
             <Button key="pause-all" label={L('⏸ Pausar todas', '⏸ Pause all')} onPress={() => void setAll($, true)} />
             <Button key="resume-all" label={L('▶ Reanudar todas', '▶ Resume all')} onPress={() => void setAll($, false)} />
           </Box>
@@ -1084,7 +1115,7 @@ export const register: Register = on => {
     const open = await read($, isOpen)
     const me = await $.session.id()
     const { Box, Button, Text } = $.ui.resolve(e)
-    const toggle = () => update($, isOpen, v => !v)
+    const toggle = () => update($, isOpen, v => !v).then(() => void refresh($).catch(() => {}))
     const total = snap.fiveHour || 1
     const scale = Math.max(total, ...snap.sessions.map(s => s.cap ?? 0))
     const now = await read($, nowMs)
@@ -1101,7 +1132,7 @@ export const register: Register = on => {
     const mode = cols >= 95 ? 'wide' : cols >= 65 ? 'mid' : 'narrow'
     const perRow = mode === 'narrow' ? 3 : 2
     // Filas que caben (una detenida usa una línea más); la sesión actual siempre entra, en el último lugar si no es de las que más gastan.
-    const budget = (e.props.maxRows ?? 40) - 7
+    const budget = (e.props.maxRows ?? 40) - 5
     let fit = 0
     for (let used = 0; fit < snap.sessions.length; fit++) {
       used += perRow + (snap.sessions[fit]!.stop ? 1 : 0)
@@ -1162,7 +1193,7 @@ export const register: Register = on => {
               </Box>
             )
           })()}
-          <Button key="config" label="⚙" onPress={() => void update($, cfgTab, () => 'ajustes').then(() => $.ui.open({ id: HISTORY_PANE, title: paneTitle() }))} />
+          <Button key="config" label="⚙" onPress={() => void update($, cfgTab, () => 'ajustes').then(() => $.ui.open({ id: HISTORY_PANE, title: paneTitle() })).then(() => refresh($).catch(() => {}))} />
           <Button key="toggle" label={open ? '⌄' : '›'} onPress={toggle} />
         </Box>
         {open && (
@@ -1214,13 +1245,10 @@ export const register: Register = on => {
                 </Box>
               )
             })}
-            {snap.sessions.length > rows.length && (
-              <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
-                <Text size="caption" dimColor>{L(`+${snap.sessions.length - rows.length} sesiones más`, `+${snap.sessions.length - rows.length} more sessions`)}</Text>
-                <Button key="all" label={L('Ver todas', 'See all')} onPress={() => void update($, cfgTab, () => 'sesiones').then(() => $.ui.open({ id: HISTORY_PANE, title: paneTitle() }))} />
-              </Box>
-            )}
-            {snap.weekly !== null && (() => {
+            {(() => {
+              const more = snap.sessions.length - rows.length
+              const moreBtn = more > 0 && <Button key="all" label={L(`+${more} más ›`, `+${more} more ›`)} onPress={() => void update($, cfgTab, () => 'sesiones').then(() => $.ui.open({ id: HISTORY_PANE, title: paneTitle() })).then(() => refresh($).catch(() => {}))} />
+              if (snap.weekly === null) return moreBtn ? <Box flexDirection="row" alignItems="center" minHeight={2}><Box flexGrow={1} />{moreBtn}</Box> : null
               const c = paceColor(snap.weekly, snap.weeklyResetsAt, now, SEVEN_DAYS)
               const dot = !c ? null : Svg ? (
                 <Svg source={dotSvg(c)} alt={L('ritmo semanal', 'weekly pace')} width={10} height={10} isInteractive={BLINKS.includes(c)} />
@@ -1230,10 +1258,12 @@ export const register: Register = on => {
               const ms = snap.weeklyResetsAt && now ? Date.parse(snap.weeklyResetsAt) - now : 0
               const rest = ms > 0 ? (ms >= 86400e3 ? `${Math.floor(ms / 86400e3)} d ${Math.floor((ms % 86400e3) / 3600e3)} h` : `${Math.floor(ms / 3600e3)} h`) : ''
               return (
-                <Box flexDirection="row" alignItems="center" gap="xs">
+                <Box flexDirection="row" alignItems="center" gap="xs" minHeight={moreBtn ? 2 : undefined}>
                   <Text size="caption" dimColor>{mode === 'wide' ? L('Semanal · todos los modelos', 'Weekly · all models') : L('Semanal', 'Weekly')} {fmt(snap.weekly)} %</Text>
                   {dot}
                   {rest && <Text size="caption" dimColor>{mode === 'wide' ? L(`se reinicia en ${rest}`, `resets in ${rest}`) : rest}</Text>}
+                  <Box flexGrow={1} />
+                  {moreBtn}
                 </Box>
               )
             })()}

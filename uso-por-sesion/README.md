@@ -50,6 +50,7 @@ Los comandos con número o texto (`/uso-limite 30`, `/uso-pausar 3`): presiona *
 - Si no caben todas, la franja muestra las que caben y **Ver todas** abre la pestaña **Sesiones** del panel, con la lista completa y los mismos botones.
 - Si una sesión está detenida, su fila dice por qué (**Pausada por ti**, **Frenada: llegó a su tope** o **Frenada: el bloque llegó al 83 %**, con la hora en que se reanuda sola) y su botón pasa a **▶ Reanudar**: quita la pausa o la libera hasta el reinicio.
 - El desglose muestra las sesiones que más gastan y siempre incluye la actual (al final, con su número, si no está entre ellas).
+- La lista se actualiza al abrir el desglose o el panel (también con **↻** en la pestaña Sesiones). Las sesiones abiertas que aún no gastan nada aparecen con 0 % como "Sesión en <carpeta>". Si no caben todas, **+N más ›** al final de la línea semanal abre la lista completa.
 - **⚙** (en la franja, donde antes estaba la ✕) abre el panel. **Pausar todas** y **Reanudar todas** están en la pestaña **Sesiones**; **Ocultar franja**, en **Ajustes**.
 - Al pie aparece **Continuar** cuando esta sesión está frenada.
 

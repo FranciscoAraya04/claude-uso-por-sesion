@@ -60,7 +60,7 @@ For commands with an argument, press **Esc** before Enter to close the suggestio
 
 - **Each session row:** **−** / **+** change its cap by the configured step (10 % by default). At 100 % (or with no cap), **+** turns into **∞**; with ∞ on, **−** removes it. **⏸** pauses it.
 - **Stopped sessions** say why (paused by you, reached its cap, or the block reached the brake, with the time it resumes on its own), and their button becomes **▶ Resume**.
-- The breakdown always includes the current session, even when it isn't among the top spenders.
+- The breakdown always includes the current session, even when it isn't among the top spenders. It refreshes when you open it or the panel (or with **↻**), lists open sessions that haven't used anything yet at 0 %, and **+N more ›** at the end of the weekly line opens the full list.
 - **⚙** on the band opens the panel. **Pause all** / **Resume all** are in the Sessions tab, **Hide band** in Settings. **Continue** appears on the band while this session is braked.
 - If the rows don't fit, the band shows the ones that do, and **See all** opens the Sessions tab.
 
