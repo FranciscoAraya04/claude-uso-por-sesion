@@ -28,6 +28,7 @@ No envía nada fuera de tu computador. Solo ejecuta `node hooks/scan.js` para le
 | `/uso` | Oculta o muestra la franja (también: ⚙ → Ajustes → **Ocultar franja**). |
 | `/uso-limite 40` | Tope para **esta** sesión: 40 % del bloque de 5 h. Al llegar, se frena sola. Toda sesión parte con **35 %**. |
 | `/uso-limite` | Muestra el tope actual de esta sesión. |
+| `/uso-limite semanal 20` | Tope **semanal** de esta sesión: 20 % del límite semanal (por defecto 100 % = sin tope). `quitar` lo quita. También en Panel → Sesiones → **Límites: Semanal**. |
 | `/uso-limite quitar` | Quita el tope de esta sesión. |
 | `/uso-pausar` | Pausa **esta** sesión. |
 | `/uso-pausar 3` | Pausa la sesión n.º 3 del desglose (desde cualquier sesión). |

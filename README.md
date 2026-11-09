@@ -46,6 +46,7 @@ The English commands (`/session-…`) and the Spanish ones (`/uso-…`) work the
 | --- | --- | --- |
 | `/session-usage` | `/uso` | Hide or show the band (also ⚙ → Settings → Hide band). |
 | `/session-limit 40` | `/uso-limite 40` | Cap **this** session at 40 % of the 5-hour block. With no number, shows the cap; `remove` clears it. |
+| `/session-limit weekly 20` | `/uso-limite semanal 20` | Weekly cap for this session (default 100 % = no cap). Also in Panel → Sessions → Limits: Weekly. |
 | `/session-pause [n \| all]` | `/uso-pausar` | Pause this session, session n of the breakdown, or all of them. |
 | `/session-resume [n \| all]` | `/uso-reanudar` | Resume. Sessions that were working pick up on their own within a minute. |
 | `/session-continue [n \| all]` | `/uso-continuar` | Release the brake and cap until the next reset (no argument: this session only). |

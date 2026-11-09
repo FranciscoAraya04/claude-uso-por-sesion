@@ -1,6 +1,6 @@
 export type BrakeTest = { pct: number; resetsAt: string }
 
-export type SessionShare = { id: string; title: string; pct: number; cap?: number; paused?: boolean; bypass?: boolean; stop?: 'pausa' | 'tope' | 'freno'; until?: string }
+export type SessionShare = { id: string; title: string; pct: number; cap?: number; paused?: boolean; bypass?: boolean; stop?: 'pausa' | 'tope' | 'freno' | 'semanal'; until?: string; wpct?: number; wcap?: number }
 export type HistoryBlock = { resetsAt: string; pct: number; weekly: number | null; top: { title: string; pct: number }[] }
 
 export type Snapshot = {
@@ -10,10 +10,12 @@ export type Snapshot = {
   weeklyResetsAt: string | null
   current: number
   sessions: SessionShare[]
+  // Uso semanal por sesión (para la vista semanal y el tope semanal).
+  week?: SessionShare[]
 }
 
 declare module 'claude-code' {
   interface PluginState {
-    'uso-por-sesion': { snapshot: Snapshot | null; isOpen: boolean; isMin: boolean; nowMs: number; test: BrakeTest | null; resumeAt: number; isBraked: boolean; stoppedBy: string; warnedFor: string; selected: string; histRange: string; histSession: string; histGroup: string; cfgTab: string; armed: string; status: string }
+    'uso-por-sesion': { snapshot: Snapshot | null; isOpen: boolean; isMin: boolean; nowMs: number; test: BrakeTest | null; resumeAt: number; isBraked: boolean; stoppedBy: string; warnedFor: string; warnedWeek: string; capView: string; selected: string; histRange: string; histSession: string; histGroup: string; cfgTab: string; armed: string; status: string }
   }
 }

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Hook, Register } from 'claude-code'
 
-import type { BrakeTest, HistoryBlock, Snapshot } from '../types'
+import type { BrakeTest, HistoryBlock, SessionShare, Snapshot } from '../types'
 
 const snapshot = atom({ plugin: 'uso-por-sesion', key: 'snapshot' } as const, null)
 const isOpen = atom({ plugin: 'uso-por-sesion', key: 'isOpen' } as const, false)
@@ -15,6 +15,10 @@ const isBraked = atom({ plugin: 'uso-por-sesion', key: 'isBraked' } as const, fa
 // Por qué se detuvo esta sesión mientras trabajaba ('' = no detenida); al liberarse, se reanuda sola.
 // Bloque (resetsAt) en que ya se avisó que esta sesión se acerca a su tope.
 const warnedFor = atom({ plugin: 'uso-por-sesion', key: 'warnedFor' } as const, '')
+// Reinicio semanal en que ya se avisó que esta sesión se acerca a su tope semanal.
+const warnedWeek = atom({ plugin: 'uso-por-sesion', key: 'warnedWeek' } as const, '')
+// Vista de topes en la pestaña Sesiones: 'bloque' (5 h) o 'semana'.
+const capView = atom({ plugin: 'uso-por-sesion', key: 'capView' } as const, 'bloque')
 // Sesión elegida en el selector del desglose ('' = esta sesión).
 const selected = atom({ plugin: 'uso-por-sesion', key: 'selected' } as const, '')
 const histRange = atom({ plugin: 'uso-por-sesion', key: 'histRange' } as const, 'semana')
@@ -81,6 +85,8 @@ const RESUME_TEXT = (): Record<string, string> => ({
     'The 5-hour block has reset (uso-por-sesion brake). Continue the task exactly where you left off.'),
   tope: L('El bloque de 5 horas se restableció o se liberó el tope de esta sesión (uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
     "The 5-hour block has reset or this session's cap was released (uso-por-sesion). Continue the task exactly where you left off."),
+  semanal: L('Se reinició el límite semanal o se liberó el tope semanal de esta sesión (uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
+    "The weekly limit has reset or this session's weekly cap was released (uso-por-sesion). Continue the task exactly where you left off."),
   pausa: L('Esta sesión fue reanudada (uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
     'This session was resumed (uso-por-sesion). Continue the task exactly where you left off.'),
 })
@@ -98,6 +104,18 @@ async function capOf($: { store: { get: (k: string) => Promise<unknown> } }, id:
   return CFG.defaultCap > 0 ? CFG.defaultCap : undefined
 }
 const capOkKey = (id: string) => `tope-ok:${id}`
+// Tope semanal: % del límite semanal (100 = sin tope, el valor por defecto) y su liberación hasta el reinicio semanal.
+const wcapKey = (id: string) => `tope-sem:${id}`
+const wcapOkKey = (id: string) => `tope-sem-ok:${id}`
+async function wcapOf($: { store: { get: (k: string) => Promise<unknown> } }, id: string) {
+  const v = await $.store.get(wcapKey(id))
+  return typeof v === 'number' && v > 0 && v < 100 ? v : 100
+}
+// Mismo reinicio semanal (la hora informada varía unos segundos).
+const sameWeek = (a: unknown, b: string | null | undefined) =>
+  typeof a === 'string' && !!b && Math.abs(Date.parse(a) - Date.parse(b)) < 6 * 3600e3
+// Día y hora, para reinicios que pueden caer otro día.
+const dayHour = (iso: string) => `${dayName(iso)} ${hhmm(iso)}`
 const pauseKey = (id: string) => `pausa:${id}`
 // Sesión que ignora el freno global hasta el reinicio guardado (resetsAt).
 const bypassKey = (id: string) => `sinfreno:${id}`
@@ -420,20 +438,27 @@ async function refresh($: $T) {
   const since = five.resetsAt ? Date.parse(five.resetsAt) - FIVE_HOURS : now - FIVE_HOURS
   const root = $.plugin.root
   const { exitCode, stdout, stderr } = await $.process.run(
-    ['node', `${root}/hooks/scan.js`, String(since), `${root}/.scan-cache.json`],
+    ['node', `${root}/hooks/scan.js`, String(since), `${root}/.scan-cache.json`, String(week?.resetsAt ? Date.parse(week.resetsAt) - SEVEN_DAYS : 0)],
     { timeoutMs: 60000 },
   )
   if (exitCode !== 0) {
     await update($, status, () => L(`Error al leer registros: ${stderr.slice(0, 120)}`, `Error reading logs: ${stderr.slice(0, 120)}`))
     return
   }
-  const { sessions } = JSON.parse(stdout) as { sessions: { id: string; title: string | null; w: number }[] }
+  const scan = JSON.parse(stdout) as { sessions: { id: string; title: string | null; w: number }[]; weekly?: { id: string; title: string | null; ww: number }[]; titles?: Record<string, string> }
+  const { sessions } = scan
+  const titles = scan.titles ?? {}
   const total = sessions.reduce((s, x) => s + x.w, 0) || 1
+  const weekList = scan.weekly ?? []
+  const wtotal = weekList.reduce((s, x) => s + x.ww, 0) || 1
+  const wpctOf = (id: string) => ((weekList.find(x => x.id === id)?.ww ?? 0) / wtotal) * (week?.percentUsed ?? 0)
   const me = await $.session.id()
   const extra = async (id: string) => {
     const cap = await capOf($, id)
     return {
       ...(cap !== undefined ? { cap } : {}),
+      wpct: wpctOf(id),
+      wcap: await wcapOf($, id),
       ...((await $.store.get(pauseKey(id))) ? { paused: true } : {}),
       ...(five.resetsAt && sameBlock(await $.store.get(bypassKey(id)), five.resetsAt) ? { bypass: true } : {}),
     }
@@ -444,18 +469,24 @@ async function refresh($: $T) {
     pct: (s.w / total) * five.percentUsed,
     ...(await extra(s.id)),
   })))
-  if (!shares.some(s => s.id === me)) shares.push({ id: me, title: L('Esta sesión', 'This session'), pct: 0, ...(await extra(me)) })
+  if (!shares.some(s => s.id === me)) shares.push({ id: me, title: titles[me] ?? L('Esta sesión', 'This session'), pct: 0, ...(await extra(me)) })
   // Sesiones abiertas que aún no gastan nada en este bloque (por ejemplo, recién creadas).
   const aliveRaw = await $.store.get(ALIVE_KEY)
   for (const [id, v] of Object.entries(aliveRaw && typeof aliveRaw === 'object' ? (aliveRaw as Alive) : {})) {
     if (shares.some(s => s.id === id) || Date.now() - v.seen > ALIVE_MS) continue
-    shares.push({ id, title: v.folder ? L(`Sesión en ${v.folder}`, `Session in ${v.folder}`) : L('Sesión sin uso aún', 'Session with no usage yet'), pct: 0, ...(await extra(id)) })
+    shares.push({ id, title: titles[id] ?? (v.folder ? L(`Sesión en ${v.folder}`, `Session in ${v.folder}`) : L('Sesión sin uso aún', 'Session with no usage yet')), pct: 0, ...(await extra(id)) })
   }
   // Por qué está detenida cada sesión (mismas reglas que stopReason) y desde cuándo se reanuda sola.
+  const wUntil = week?.resetsAt ? new Date(Date.parse(week.resetsAt) + resumeMargin()).toISOString() : undefined
+  const weekStop = async (sh: { id: string; wpct?: number; wcap?: number }) =>
+    !!wUntil && (sh.wcap ?? 100) < 100 && (sh.wpct ?? 0) >= Math.max(0, (sh.wcap ?? 100) - CFG.closeMargin) &&
+    !sameWeek(await $.store.get(wcapOkKey(sh.id)), week?.resetsAt)
+  for (const sh of shares) if (!sh.paused && (await weekStop(sh))) Object.assign(sh, { stop: 'semanal', until: wUntil })
   if (five.resetsAt) {
     const until = new Date(Date.parse(five.resetsAt) + resumeMargin()).toISOString()
     const approved = sameBlock(await $.store.get(APPROVED_KEY), five.resetsAt)
     for (const sh of shares) {
+      if ((sh as { stop?: string }).stop === 'semanal') continue
       const ok = (k: string) => $.store.get(k).then(v => sameBlock(v, five.resetsAt))
       let stop: 'pausa' | 'tope' | 'freno' | undefined
       if (sh.paused) stop = 'pausa'
@@ -474,10 +505,17 @@ async function refresh($: $T) {
     weeklyResetsAt: week?.resetsAt ?? null,
     current: shares.find(s => s.id === me)?.pct ?? 0,
     sessions: kept,
+    week: await Promise.all([
+      ...weekList.slice(0, 12).map(w => shares.find(s => s.id === w.id) ?? { id: w.id, title: w.title ?? titles[w.id] ?? w.id.slice(0, 8), pct: 0, wpct: wpctOf(w.id) } as SessionShare),
+      ...shares.filter(s => !weekList.slice(0, 12).some(w => w.id === s.id)),
+    ].map(async s => ({ ...s, wcap: (s as SessionShare).wcap ?? (await wcapOf($, s.id)) }))),
   }
   await update($, snapshot, () => next)
   if (next.resetsAt) await recordHistory($, next)
   await warnNearCap($, next)
+  await warnNearWeekCap($, next)
+  // La cabecera muestra el motivo del freno apenas cambian los datos.
+  await syncStop($)
 }
 
 // Guarda el bloque actual en el historial (uno por reinicio, se queda con el máximo visto).
@@ -508,6 +546,17 @@ async function warnNearCap($: $T, snap: Snapshot) {
   $.ui.toast(L(`Esta sesión va en ${fmt(snap.current)} % del bloque: cerca de su tope de ${fmt(cap)} %.`, `This session is at ${fmt(snap.current)} % of the block: close to its ${fmt(cap)} % cap.`))
 }
 
+// Un aviso por semana cuando esta sesión pasa el % de aviso de su tope semanal.
+async function warnNearWeekCap($: $T, snap: Snapshot) {
+  const id = await $.session.id()
+  const s = snap.sessions.find(x => x.id === id)
+  if (!s || !snap.weeklyResetsAt || (s.wcap ?? 100) >= 100 || (s.wpct ?? 0) < (s.wcap ?? 100) * (CFG.warnPct / 100)) return
+  if (sameWeek(await read($, warnedWeek), snap.weeklyResetsAt)) return
+  await update($, warnedWeek, () => snap.weeklyResetsAt!)
+  $.ui.toast(L(`Esta sesión va en ${fmt(s.wpct ?? 0)} % del límite semanal: cerca de su tope semanal de ${fmt(s.wcap ?? 100)} %.`,
+    `This session is at ${fmt(s.wpct ?? 0)} % of the weekly limit: close to its ${fmt(s.wcap ?? 100)} % weekly cap.`))
+}
+
 // Sube o baja el tope de una sesión de a 10 %; bajo 10 queda sin tope.
 // Corrige una fila del desglose al instante; el recálculo completo llega después.
 async function patchRow($: $T, id: string, fn: (s: Snapshot['sessions'][number]) => Snapshot['sessions'][number]) {
@@ -529,6 +578,15 @@ async function stepCap($: $T, id: string, dir: 1 | -1) {
   await syncStop($)
 }
 
+async function stepWeekCap($: $T, id: string, dir: 1 | -1) {
+  const next = Math.max(CFG.capStep >= 100 ? 1 : CFG.capStep, Math.min(100, (await wcapOf($, id)) + dir * CFG.capStep))
+  await $.store.set(wcapKey(id), next)
+  await $.store.delete(wcapOkKey(id))
+  await update($, snapshot, snap => (snap ? { ...snap, week: snap.week?.map(s => (s.id === id ? { ...s, wcap: next } : s)) } : snap))
+  void refresh($).catch(() => {})
+  await syncStop($)
+}
+
 async function activeTest($: $T) {
   const t = await read($, test)
   if (t && Date.parse(t.resetsAt) + resumeMargin() < Date.now()) {
@@ -546,10 +604,20 @@ async function limit($: $T) {
 }
 
 // Qué detiene a esta sesión ahora: una pausa, el freno global o su tope propio.
-async function stopReason($: $T): Promise<{ kind: string; text: string } | null> {
+async function stopReason($: $T): Promise<{ kind: string; text: string; until?: number } | null> {
   const me = await $.session.id()
   if (await $.store.get(pauseKey(me))) {
     return { kind: 'pausa', text: L(`Sesión pausada con ${C('uso-pausar')}. Se reanuda con ${C('uso-reanudar')}.`, `Session paused with ${C('uso-pausar')}. Resume it with ${C('uso-reanudar')}.`) }
+  }
+  const snapNow = await read($, snapshot)
+  const wrow = snapNow?.sessions.find(s => s.id === me)
+  const wreset = snapNow?.weeklyResetsAt
+  if (wreset && Date.parse(wreset) > Date.now() && wrow && (wrow.wcap ?? 100) < 100 && (wrow.wpct ?? 0) >= Math.max(0, (wrow.wcap ?? 100) - CFG.closeMargin) &&
+    !sameWeek(await $.store.get(wcapOkKey(me)), wreset)) {
+    const until = Date.parse(wreset) + resumeMargin()
+    const at = dayHour(new Date(until).toISOString())
+    return { kind: 'semanal', until, text: L(`Tope semanal de esta sesión: lleva ${fmt(wrow.wpct ?? 0)} % del límite semanal (tope ${fmt(wrow.wcap ?? 100)} %). Se reanuda sola el ${at}, tras el reinicio semanal; ${C('uso-continuar')} la libera antes.`,
+      `This session's weekly cap: it has used ${fmt(wrow.wpct ?? 0)} % of the weekly limit (cap ${fmt(wrow.wcap ?? 100)} %). It resumes on its own on ${at}, after the weekly reset; ${C('uso-continuar')} releases it sooner.`) }
   }
   const l = await limit($)
   if (!l || Date.parse(l.resetsAt) + resumeMargin() <= Date.now()) return null
@@ -579,7 +647,7 @@ async function syncStop($: $T) {
   const braked = r !== null
   if (braked !== (await read($, isBraked))) await update($, isBraked, () => braked)
   const l = await limit($)
-  const at = r && r.kind !== 'pausa' && l ? Date.parse(l.resetsAt) + resumeMargin() : 0
+  const at = r?.until ?? (r && r.kind !== 'pausa' && l ? Date.parse(l.resetsAt) + resumeMargin() : 0)
   if (at !== (await read($, resumeAt))) await update($, resumeAt, () => at)
   return r
 }
@@ -610,7 +678,15 @@ async function setPaused($: $T, id: string, paused: boolean) {
 async function releaseSession($: $T, id: string) {
   const snap = await read($, snapshot)
   const row = snap?.sessions.find(s => s.id === id)
-  if (row?.stop === 'pausa' || !snap?.resetsAt) return setPaused($, id, false)
+  if (row?.stop === 'pausa') return setPaused($, id, false)
+  if (!snap?.resetsAt && row?.stop === 'semanal' && snap?.weeklyResetsAt) {
+    await $.store.set(wcapOkKey(id), snap.weeklyResetsAt)
+    void refresh($).catch(() => {})
+    await maybeResume($)
+    return void (await syncStop($))
+  }
+  if (!snap?.resetsAt) return setPaused($, id, false)
+  if (row?.stop === 'semanal' && snap.weeklyResetsAt) await $.store.set(wcapOkKey(id), snap.weeklyResetsAt)
   await $.store.set(brakeOkKey(id), snap.resetsAt)
   await $.store.set(capOkKey(id), snap.resetsAt)
   await patchRow($, id, s => {
@@ -634,6 +710,7 @@ async function setAll($: $T, paused: boolean) {
         await $.store.set(brakeOkKey(s.id), snap.resetsAt)
         await $.store.set(capOkKey(s.id), snap.resetsAt)
       }
+      if (snap?.weeklyResetsAt) await $.store.set(wcapOkKey(s.id), snap.weeklyResetsAt)
     }
   }
   if (!paused && snap?.resetsAt) await $.store.set(APPROVED_KEY, snap.resetsAt)
@@ -701,9 +778,11 @@ const cmdUsoContinuar: Hook<'command.run'> = async ($, e) => {
   const list = await targets($, e.args)
   if (!list.length) return { text: notFound() }
   if (isAll) await $.store.set(APPROVED_KEY, l.resetsAt)
+  const wr = (await read($, snapshot))?.weeklyResetsAt
   for (const t of list) {
     await $.store.set(brakeOkKey(t.id), l.resetsAt)
     await $.store.set(capOkKey(t.id), l.resetsAt)
+    if (wr) await $.store.set(wcapOkKey(t.id), wr)
   }
   await maybeResume($)
   await syncStop($)
@@ -713,7 +792,25 @@ const cmdUsoContinuar: Hook<'command.run'> = async ($, e) => {
 
 const cmdUsoLimite: Hook<'command.run'> = async ($, e) => {
   const me = await $.session.id()
-  const a = e.args.trim().toLowerCase().replace('%', '').replace(',', '.')
+  const a0 = e.args.trim().toLowerCase().replace('%', '').replace(',', '.')
+  const wk = a0.match(/^(semanal|weekly)\s*(.*)$/)
+  if (wk) {
+    const v = wk[2]!.trim()
+    const c = `${C('uso-limite')} ${L('semanal', 'weekly')}`
+    if (!v) {
+      const w = await wcapOf($, me)
+      return { text: w < 100 ? L(`Tope semanal de esta sesión: ${fmt(w)} % del límite semanal.`, `This session's weekly cap: ${fmt(w)} % of the weekly limit.`) : L(`Esta sesión no tiene tope semanal. Ponle uno con ${c} <n>.`, `This session has no weekly cap. Set one with ${c} <n>.`) }
+    }
+    const off = ['quitar', 'remove', 'off'].includes(v)
+    const n = off ? 100 : Number(v)
+    if (!(n > 0 && n <= 100)) return { text: L(`Uso: ${c} 20 (porcentaje del límite semanal) o ${c} quitar.`, `Usage: ${c} 20 (percent of the weekly limit) or ${c} remove.`) }
+    await $.store.set(wcapKey(me), n)
+    await $.store.delete(wcapOkKey(me))
+    await refresh($).catch(() => {})
+    await syncStop($)
+    return { text: n >= 100 ? L('Tope semanal de esta sesión quitado.', "This session's weekly cap removed.") : L(`Tope semanal de esta sesión: ${fmt(n)} % del límite semanal.`, `This session's weekly cap: ${fmt(n)} % of the weekly limit.`) }
+  }
+  const a = a0
   if (!a) {
     const cap = await capOf($, me)
     const c = C('uso-limite')
@@ -797,9 +894,10 @@ const cmdUso: Hook<'command.run'> = async $ => {
 // Etiqueta de una sesión detenida y su color.
 function stopLabel(s: { stop?: string; until?: string }): { text: string; color: string } | null {
   const at = s.until ? hhmm(s.until) : ''
+  if (s.stop === 'semanal') return { text: L(`Frenada: llegó a su tope semanal · reanuda sola el ${s.until ? dayHour(s.until) : ''}`, `Braked: reached its weekly cap · resumes on its own on ${s.until ? dayHour(s.until) : ''}`), color: '#ef4444' }
   if (s.stop === 'pausa') return { text: L('Pausada por ti', 'Paused by you'), color: '#facc15' }
-  if (s.stop === 'tope') return { text: L(`Frenada: llegó a su tope · reanuda sola a las ${at}`, `Braked: reached its cap · resumes on its own at ${at}`), color: '#ef4444' }
-  if (s.stop === 'freno') return { text: L(`Frenada: el bloque llegó al ${CFG.brakeAt} % · reanuda sola a las ${at}`, `Braked: the block reached ${CFG.brakeAt} % · resumes on its own at ${at}`), color: '#ef4444' }
+  if (s.stop === 'tope') return { text: L(`Frenada: llegó a su tope de 5 h · reanuda sola a las ${at}`, `Braked: reached its 5-hour cap · resumes on its own at ${at}`), color: '#ef4444' }
+  if (s.stop === 'freno') return { text: L(`Frenada: el bloque de 5 h llegó al ${CFG.brakeAt} % · reanuda sola a las ${at}`, `Braked: the 5-hour block reached ${CFG.brakeAt} % · resumes on its own at ${at}`), color: '#ef4444' }
   return null
 }
 
@@ -899,15 +997,57 @@ export const register: Register = on => {
     )
     if (tab === 'sesiones') {
       const snap = await read($, snapshot)
+      const view = await read($, capView)
+      const Select = 'Select' in els ? els.Select : undefined
+      const viewPick = Select
+        ? <Select key="capview" label={L('Límites', 'Limits')} options={[{ value: 'bloque', label: L('Bloque de 5 h', '5-hour block') }, { value: 'semana', label: L('Semanal', 'Weekly') }]} value={view} onSelect={v => void update($, capView, () => v)} />
+        : null
       const me = await $.session.id()
       const Svg = 'Svg' in els ? els.Svg : undefined
       if (!snap) return <Box flexDirection="column" gap="sm">{tabs}<Text dimColor>{L('Calculando uso…', 'Calculating usage…')}</Text></Box>
       const scale = Math.max(snap.fiveHour || 1, ...snap.sessions.map(s => s.cap ?? 0))
       const full = snap.sessions.filter(s => s.bypass).length >= CFG.maxBypass
       const barW = Math.max(50, Math.min(140, (e.props.bodyColumns ?? 60) * 8 - 330))
+      if (view === 'semana') {
+        const list = snap.week ?? snap.sessions
+        const wscale = Math.max(snap.weekly || 1, ...list.map(s => ((s.wcap ?? 100) < 100 ? s.wcap! : 0)))
+        return (
+          <Box flexDirection="column" gap="sm">
+            {tabs}
+            {viewPick}
+            <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap="sm" minHeight={2}>
+              <Text size="caption" dimColor>{L(`Semanal: ${fmt(snap.weekly ?? 0)} % usado · se reinicia el ${snap.weeklyResetsAt ? dayHour(snap.weeklyResetsAt) : '—'}`, `Weekly: ${fmt(snap.weekly ?? 0)} % used · resets ${snap.weeklyResetsAt ? dayHour(snap.weeklyResetsAt) : '—'}`)}</Text>
+              <Box flexGrow={1} />
+              <Button key="reload" label="↻" onPress={() => void refresh($).catch(() => {})} />
+            </Box>
+            <Text size="caption" dimColor>{L('Tope semanal de cada sesión, en % del límite semanal. 100 % = sin tope.', "Each session's weekly cap, as % of the weekly limit. 100 % = no cap.")}</Text>
+            {list.map((s, i) => {
+              const wc = s.wcap ?? 100
+              const tag = s.stop === 'semanal' ? stopLabel(s) : null
+              return (
+                <Box key={`w-${s.id}`} flexDirection="column" gap="xs">
+                  <Text size="caption" weight={s.id === me ? 'medium' : 'regular'} dimColor={s.id !== me} wrap="truncate">{i + 1}. {s.title}</Text>
+                  <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
+                    {Svg && <Svg source={svgBar(barW, ((s.wpct ?? 0) / wscale) * 100, 0, s.id === me ? '#a855f7' : '#7d7b74', wc < 100 ? (wc / wscale) * 100 : undefined)} alt={`${fmt(s.wpct ?? 0)} %`} width={barW} height={6} />}
+                    <Box flexShrink={0}><Text size="caption" tabular wrap="truncate" dimColor={s.id !== me} color={wc < 100 && (s.wpct ?? 0) >= wc ? '#ef4444' : undefined}>
+                      {fmt(s.wpct ?? 0)} % / {wc < 100 ? `${fmt(wc)} %` : L('sin tope', 'no cap')}
+                    </Text></Box>
+                    <Box flexGrow={1} />
+                    <Button key={`wdn-${s.id}`} label="−" onPress={() => void stepWeekCap($, s.id, -1)} />
+                    <Button key={`wup-${s.id}`} label="+" onPress={() => void stepWeekCap($, s.id, 1)} />
+                    {tag && <Button key={`wpp-${s.id}`} label={L('▶ Reanudar', '▶ Resume')} variant="primary" onPress={() => void releaseSession($, s.id)} />}
+                  </Box>
+                  {tag && <Text size="caption" color={tag.color} wrap="truncate">{tag.text}</Text>}
+                </Box>
+              )
+            })}
+          </Box>
+        )
+      }
       return (
         <Box flexDirection="column" gap="sm">
           {tabs}
+          {viewPick}
           <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap="sm" minHeight={2}>
             <Text size="caption" dimColor>{L(`Bloque de 5 h: ${fmt(snap.fiveHour)} % usado · se reinicia a las ${hhmm(snap.resetsAt)}`, `5-hour block: ${fmt(snap.fiveHour)} % used · resets at ${hhmm(snap.resetsAt)}`)}</Text>
             <Box flexGrow={1} />
@@ -1008,6 +1148,7 @@ export const register: Register = on => {
         [C('uso-historial'), L('Abre el panel en el historial.', 'Opens the pane on the history.')],
         [`${C('uso-limite')} 30`, L('Tope de esta sesión en % del bloque de 5 h.', "This session's cap as % of the 5-hour block.")],
         [C('uso-limite'), L('Muestra el tope actual de esta sesión.', "Shows this session's current cap.")],
+        [`${C('uso-limite')} ${L('semanal', 'weekly')} 20`, L('Tope semanal de esta sesión en % del límite semanal (quitar: sin tope).', "This session's weekly cap as % of the weekly limit (remove: no cap).")],
         [`${C('uso-limite')} ${L('quitar', 'remove')}`, L('Quita el tope de esta sesión.', "Removes this session's cap.")],
         [`${C('uso-pausar')} ${any}`, L('Pausa esta sesión, la n° del desglose o todas.', 'Pauses this session, number n in the list, or all.')],
         [`${C('uso-reanudar')} ${any}`, L('Reanuda; las que trabajaban retoman solas.', 'Resumes; those that were working pick up on their own.')],
@@ -1183,7 +1324,14 @@ export const register: Register = on => {
             )
             if (braked) {
               return (
-                <Text size="caption" color="#ef4444" wrap="truncate">{resume ? (mode === 'wide' ? L(`⏸ frenado · reanuda ${hhmm(new Date(resume).toISOString())}`, `⏸ braked · resumes ${hhmm(new Date(resume).toISOString())}`) : `⏸ ${hhmm(new Date(resume).toISOString())}`) : L('⏸ pausada', '⏸ paused')}</Text>
+                <Text size="caption" color="#ef4444" wrap="truncate">{(() => {
+                  const kind = snap.sessions.find(s => s.id === me)?.stop
+                  if (!resume) return L('⏸ pausada', '⏸ paused')
+                  const iso = new Date(resume).toISOString()
+                  const why = kind === 'semanal' ? L('tope semanal', 'weekly cap') : kind === 'tope' ? L('tope 5 h', '5-h cap') : L(`freno 5 h`, '5-h brake')
+                  const when = kind === 'semanal' ? dayHour(iso) : hhmm(iso)
+                  return mode === 'wide' ? L(`⏸ ${why} · reanuda ${when}`, `⏸ ${why} · resumes ${when}`) : `⏸ ${why} · ${when}`
+                })()}</Text>
               )
             }
             return (
@@ -1262,6 +1410,12 @@ export const register: Register = on => {
                   <Text size="caption" dimColor>{mode === 'wide' ? L('Semanal · todos los modelos', 'Weekly · all models') : L('Semanal', 'Weekly')} {fmt(snap.weekly)} %</Text>
                   {dot}
                   {rest && <Text size="caption" dimColor>{mode === 'wide' ? L(`se reinicia en ${rest}`, `resets in ${rest}`) : rest}</Text>}
+                  {(() => {
+                    const mine = snap.sessions.find(s => s.id === me)
+                    if (!mine || (mine.wcap ?? 100) >= 100) return null
+                    const near = (mine.wpct ?? 0) >= (mine.wcap ?? 100) * (CFG.warnPct / 100)
+                    return <Text size="caption" color={near ? '#facc15' : undefined} dimColor={!near}>{L(` · esta sesión ${fmt(mine.wpct ?? 0)} % / ${fmt(mine.wcap ?? 100)} %`, ` · this session ${fmt(mine.wpct ?? 0)} % / ${fmt(mine.wcap ?? 100)} %`)}</Text>
+                  })()}
                   <Box flexGrow={1} />
                   {moreBtn}
                 </Box>

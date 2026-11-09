@@ -202,3 +202,63 @@ test('una sesión abierta sin uso aparece con el nombre de su carpeta', async ($
   expect(await ui.find({ type: 'Text', text: /Sesión en linkedin/ })).toBeTruthy()
   await ui.unmount()
 })
+
+function setupWeek(on: Parameters<Parameters<typeof test>[1]>[1], store: Map<string, unknown>, scan: object) {
+  const resetsAt = new Date(Date.now() + 3600e3).toISOString()
+  const weekReset = new Date(Date.now() + 3 * 86400e3).toISOString()
+  on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: 20, resetsAt }, { kind: 'seven_day', percentUsed: 60, resetsAt: weekReset }] } }))
+  on('session.id', () => ({ value: 'yo' }))
+  on('store.get', (_, e) => ({ value: store.get(e.key) }))
+  on('store.set', (_, e) => (store.set(e.key, e.value), { value: undefined }))
+  on('store.delete', (_, e) => (store.delete(e.key), { value: undefined }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify(scan), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  const toasts: string[] = []
+  on('ui.toast', (_, e) => (toasts.push(JSON.stringify(e)), { value: undefined }))
+  on('clock.now', () => ({ value: Date.now() }))
+  on('command.run', () => ({ text: '' }))
+  on('prompt.submit', () => ({ value: undefined }))
+  return { weekReset, toasts }
+}
+
+test('con tope semanal alcanzado, la franja dice "tope semanal" y la fila se puede reanudar', async ($, on) => {
+  const store = new Map<string, unknown>([['config', { lang: 'es' }], ['tope-sem:yo', 30]])
+  const { weekReset } = setupWeek(on, store, {
+    sessions: [{ id: 'yo', title: 'Mía', w: 1 }, { id: 'otra', title: 'Otra', w: 1 }],
+    weekly: [{ id: 'yo', title: 'Mía', ww: 6 }, { id: 'otra', title: 'Otra', ww: 4 }],
+    titles: { yo: 'Mía', otra: 'Otra' },
+  })
+  await $.command.run({ command: 'uso-limite', args: '90' })
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: /tope semanal/ })).toBeTruthy()
+  await ui.press({ key: 'toggle' })
+  expect(await ui.find({ type: 'Text', text: /llegó a su tope semanal/ })).toBeTruthy()
+  await ui.press({ key: 'p-yo' })
+  expect(store.get('tope-sem-ok:yo')).toBe(weekReset)
+  await ui.unmount()
+})
+
+test('el aviso semanal aparece cerca del tope y /uso-limite semanal lo ajusta', async ($, on) => {
+  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
+  const { toasts } = setupWeek(on, store, {
+    sessions: [{ id: 'yo', title: 'Mía', w: 1 }],
+    weekly: [{ id: 'yo', title: 'Mía', ww: 1 }, { id: 'otra', title: 'Otra', ww: 1 }],
+    titles: { yo: 'Mía' },
+  })
+  const r = await $.command.run({ command: 'uso-limite', args: 'semanal 35' })
+  expect(JSON.stringify(r)).toContain('35 %')
+  expect(store.get('tope-sem:yo')).toBe(35)
+  expect(toasts.some(t => /tope semanal/.test(t))).toBe(true)
+  await $.command.run({ command: 'uso-limite', args: 'semanal quitar' })
+  expect(store.get('tope-sem:yo')).toBe(100)
+})
+
+test('una sesión abierta sin uso en el bloque muestra su título real', async ($, on) => {
+  const store = new Map<string, unknown>([['config', { lang: 'es' }], ['activas', { otra: { folder: 'Reportes', seen: Date.now() } }]])
+  setupWeek(on, store, { sessions: [{ id: 'yo', title: 'Mía', w: 1 }], weekly: [], titles: { yo: 'Mía', otra: 'Proyecto minería' } })
+  await $.command.run({ command: 'uso-limite', args: '90' })
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'toggle' })
+  expect(await ui.find({ type: 'Text', text: /Proyecto minería/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /Sesión en Reportes/ })).toBeFalsy()
+  await ui.unmount()
+})
