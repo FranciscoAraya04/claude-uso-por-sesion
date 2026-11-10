@@ -14,9 +14,10 @@ const sinceWeek = Number(process.argv[4]) || 0
 const keepFrom = sinceWeek ? Math.min(since, sinceWeek) : since
 const root = path.join(os.homedir(), '.claude', 'projects')
 // Versión del caché: cambia cuando cambia lo guardado o los precios, y entonces se relee todo una vez.
-const CACHE_V = 3
+const CACHE_V = 4
 
 // USD por millón de tokens [entrada, salida, lectura de caché, escritura de caché 5 min], por modelo.
+// La escritura de caché de 1 h (la que usa Claude Code) cuesta el doble de la entrada.
 // El primero que calce gana; un modelo desconocido usa el precio de Opus.
 const PRICES = [
   [/fable-5-2|mythos-5-2/, [8, 40, 0.2, 10]],
@@ -31,8 +32,28 @@ const PRICES = [
 ]
 const weight = (model, u) => {
   const [i, o, r, c] = (PRICES.find(([re]) => re.test(model)) || [0, [5, 25, 0.5, 6.25]])[1]
+  const write1h = (u.cache_creation && u.cache_creation.ephemeral_1h_input_tokens) || 0
+  const write5m = Math.max(0, (u.cache_creation_input_tokens || 0) - write1h)
   return ((u.input_tokens || 0) * i + (u.output_tokens || 0) * o +
-    (u.cache_read_input_tokens || 0) * r + (u.cache_creation_input_tokens || 0) * c) / 1e6
+    (u.cache_read_input_tokens || 0) * r + write5m * c + write1h * i * 2) / 1e6
+}
+
+// Todos los registros de una sesión: el principal y, bajo su carpeta, los de subagentes y workflows
+// (a cualquier profundidad), para que su gasto cuente para la sesión que los lanzó.
+function sessionFiles(dir, name) {
+  const out = []
+  if (!name.endsWith('.jsonl')) return out
+  const sid = name.slice(0, -6), sdir = path.join(dir, sid)
+  out.push({ file: path.join(dir, name), sid, sdir, main: true })
+  const walk = d => {
+    for (const n of safeList(d)) {
+      const p = path.join(d, n)
+      if (n.endsWith('.jsonl')) out.push({ file: p, sid, sdir, main: false })
+      else if (!n.includes('.')) walk(p)
+    }
+  }
+  walk(sdir)
+  return out
 }
 
 if (process.argv[2] === 'cost') costMode(Number(process.argv[3]), Number(process.argv[4]))
@@ -47,17 +68,11 @@ try {
 const files = []
 for (const proj of safeList(root)) {
   const dir = path.join(root, proj)
-  for (const name of safeList(dir)) {
-    if (name.endsWith('.jsonl')) files.push({ file: path.join(dir, name), sid: name.slice(0, -6), sdir: path.join(dir, name.slice(0, -6)) })
-    const sub = path.join(dir, name, 'subagents')
-    for (const s of safeList(sub)) {
-      if (s.endsWith('.jsonl')) files.push({ file: path.join(sub, s), sid: name, sdir: path.join(dir, name) })
-    }
-  }
+  for (const name of safeList(dir)) files.push(...sessionFiles(dir, name))
 }
 
 const next = {}
-for (const { file, sid, sdir } of files) {
+for (const { file, sid, sdir, main } of files) {
   let st
   try { st = fs.statSync(file) } catch { continue }
   if (st.mtimeMs < keepFrom) continue
@@ -78,6 +93,7 @@ for (const { file, sid, sdir } of files) {
   for (const [id, m] of Object.entries(entry.msgs)) if (m[0] < keepFrom) delete entry.msgs[id]
   entry.sid = sid
   entry.sdir = sdir
+  entry.main = main
   next[file] = entry
 }
 try { fs.writeFileSync(cacheFile, JSON.stringify({ v: CACHE_V, keepFrom, files: next })) } catch {}
@@ -85,7 +101,8 @@ try { fs.writeFileSync(cacheFile, JSON.stringify({ v: CACHE_V, keepFrom, files: 
 const bySid = {}
 for (const e of Object.values(next)) {
   const s = (bySid[e.sid] ??= { id: e.sid, title: null, w: 0, ww: 0 })
-  if (e.title) s.title = e.title
+  // El título es el de la sesión, no el de sus subagentes.
+  if (e.title && e.main) s.title = e.title
   if (!s.dir) {
     s.dir = e.sdir
     try { s.title = JSON.parse(fs.readFileSync(path.join(s.dir, 'custom-title.json'), 'utf8')).customTitle || s.title } catch {}
@@ -129,10 +146,7 @@ function costMode(from, to) {
   for (const proj of safeList(root)) {
     const dir = path.join(root, proj)
     const list = []
-    for (const name of safeList(dir)) {
-      if (name.endsWith('.jsonl')) list.push(path.join(dir, name))
-      for (const s of safeList(path.join(dir, name, 'subagents'))) if (s.endsWith('.jsonl')) list.push(path.join(dir, name, 'subagents', s))
-    }
+    for (const name of safeList(dir)) for (const f of sessionFiles(dir, name)) list.push(f.file)
     for (const file of list) {
       try { if (fs.statSync(file).mtimeMs < from) continue } catch { continue }
       let text

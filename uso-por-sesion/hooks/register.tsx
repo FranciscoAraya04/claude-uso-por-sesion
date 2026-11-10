@@ -29,7 +29,7 @@ const histGroup = atom({ plugin: 'uso-por-sesion', key: 'histGroup' } as const, 
 const histWeek = atom({ plugin: 'uso-por-sesion', key: 'histWeek' } as const, 0)
 // Costo de semanas pasadas (USD a precios de API), por fecha de reinicio; también se guarda en el almacén.
 const weekCosts = atom({ plugin: 'uso-por-sesion', key: 'weekCosts' } as const, {} as Record<string, number>)
-const WEEK_COSTS_KEY = 'costo-semanas'
+const WEEK_COSTS_KEY = 'costo-semanas-v2'
 // Semanas cuyo costo se está calculando, para no lanzar el cálculo dos veces.
 const COSTING = new Set<string>()
 const cfgTab = atom({ plugin: 'uso-por-sesion', key: 'cfgTab' } as const, 'sesiones')
