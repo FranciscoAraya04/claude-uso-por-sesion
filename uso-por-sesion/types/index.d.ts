@@ -18,6 +18,6 @@ export type Snapshot = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'uso-por-sesion': { snapshot: Snapshot | null; isOpen: boolean; isMin: boolean; nowMs: number; test: BrakeTest | null; resumeAt: number; isBraked: boolean; stoppedBy: string; warnedFor: string; warnedWeek: string; capView: string; selected: string; histRange: string; histSession: string; histGroup: string; histWeek: number; weekCosts: Record<string, number>; cfgTab: string; armed: string; status: string }
+    'uso-por-sesion': { snapshot: Snapshot | null; isOpen: boolean; isMin: boolean; nowMs: number; test: BrakeTest | null; resumeAt: number; isBraked: boolean; stoppedBy: string; warnedFor: string; warnedWeek: string; capView: string; selected: string; histRange: string; histSession: string; histGroup: string; histWeek: number; weekCosts2: Record<string, number>; cfgTab: string; armed: string; status: string }
   }
 }

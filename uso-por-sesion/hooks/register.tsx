@@ -28,7 +28,7 @@ const histGroup = atom({ plugin: 'uso-por-sesion', key: 'histGroup' } as const, 
 // Semana del gráfico semanal: 0 = la actual, 1 = la anterior, etc.
 const histWeek = atom({ plugin: 'uso-por-sesion', key: 'histWeek' } as const, 0)
 // Costo de semanas pasadas (USD a precios de API), por fecha de reinicio; también se guarda en el almacén.
-const weekCosts = atom({ plugin: 'uso-por-sesion', key: 'weekCosts' } as const, {} as Record<string, number>)
+const weekCosts = atom({ plugin: 'uso-por-sesion', key: 'weekCosts2' } as const, {} as Record<string, number>)
 const WEEK_COSTS_KEY = 'costo-semanas-v2'
 // Semanas cuyo costo se está calculando, para no lanzar el cálculo dos veces.
 const COSTING = new Set<string>()
@@ -1229,7 +1229,8 @@ export const register: Register = on => {
     }
     const wk = Math.min(await read($, histWeek), Math.max(0, weekOpts.length - 1))
     const storedCosts = await $.store.get(WEEK_COSTS_KEY)
-    const costs = { ...(storedCosts && typeof storedCosts === 'object' ? (storedCosts as Record<string, number>) : {}), ...(await read($, weekCosts)) }
+    // El almacén manda: la copia en memoria solo adelanta un cálculo recién terminado.
+    const costs = { ...(await read($, weekCosts)), ...(storedCosts && typeof storedCosts === 'object' ? (storedCosts as Record<string, number>) : {}) }
     const wkEnd = curReset ? new Date(curReset - wk * SEVEN_DAYS).toISOString() : ''
     // Una semana pasada sin costo guardado se calcula en segundo plano (una vez por semana elegida).
     if (wk > 0 && costs[wkEnd] === undefined && !COSTING.has(wkEnd)) {
