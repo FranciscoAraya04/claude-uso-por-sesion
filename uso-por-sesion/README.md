@@ -77,6 +77,7 @@ En **⚙ Configuración → Ajustes** cada persona ajusta con − / +:
 - **Periodo:** última semana (barras por bloque de 5 h, con la línea del freno y el gráfico semanal), último mes (por día), último año (por semana) o histórico (por mes).
 - **Sesión:** filtra para ver solo una sesión; disponible en semana y mes.
 - **Agrupar** (semana y mes): **por ventana de 5 h** (cada barra rotulada con su hora de reinicio y líneas punteadas entre días) o **por día**.
+- **Semana:** el gráfico semanal permite elegir una semana anterior (cada una de reinicio a reinicio) y muestra con qué % terminó.
 - El gráfico semanal cubre el periodo completo, del inicio al reinicio semanal, con los días marcados, una raya en el momento actual y la proyección lineal a tu ritmo; si llegas al 100 % antes del reinicio, marca el punto y dice el día y la hora. Con pocas barras, el valor va escrito encima de cada una.
 - Fuera de la semana, cada barra suma los % de bloque del periodo: 150 % equivale a un bloque y medio gastado.
 

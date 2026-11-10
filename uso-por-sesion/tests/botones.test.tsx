@@ -262,3 +262,22 @@ test('una sesión abierta sin uso en el bloque muestra su título real', async (
   expect(await ui.find({ type: 'Text', text: /Sesión en Reportes/ })).toBeFalsy()
   await ui.unmount()
 })
+
+test('el gráfico semanal permite ver una semana anterior', async ($, on) => {
+  const store = new Map<string, unknown>([['config', { lang: 'es' }], ['historial', [
+    { resetsAt: new Date(Date.now() - 2 * 86400e3).toISOString(), pct: 40, weekly: 71, top: [] },
+    { resetsAt: new Date(Date.now() - 5 * 86400e3).toISOString(), pct: 30, weekly: 40, top: [] },
+  ]]])
+  setupWeek(on, store, { sessions: [{ id: 'yo', title: 'Mía', w: 1 }], weekly: [], titles: {} })
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  await $.command.run({ command: 'uso-limite', args: '90' })
+  await $.command.run({ command: 'uso-historial', args: '' })
+  const pane = await $.ui.mount({
+    plugin: 'uso-por-sesion', component: 'Pane', requestId: 'uso-config', surface: 'desktop',
+    props: { title: 'Uso por sesión', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
+  })
+  expect(await pane.find({ key: 'week' })).toBeTruthy()
+  await pane.select({ key: 'week', value: '1' })
+  expect(await pane.find({ type: 'Text', text: /terminó en 40 %/ })).toBeTruthy()
+  await pane.unmount()
+})

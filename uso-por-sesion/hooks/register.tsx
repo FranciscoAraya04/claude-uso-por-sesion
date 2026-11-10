@@ -25,6 +25,8 @@ const histRange = atom({ plugin: 'uso-por-sesion', key: 'histRange' } as const, 
 const histSession = atom({ plugin: 'uso-por-sesion', key: 'histSession' } as const, '')
 // Agrupación en semana y mes: 'bloque' (ventana de 5 h), 'dia' o '' (automático según el periodo).
 const histGroup = atom({ plugin: 'uso-por-sesion', key: 'histGroup' } as const, '')
+// Semana del gráfico semanal: 0 = la actual, 1 = la anterior, etc.
+const histWeek = atom({ plugin: 'uso-por-sesion', key: 'histWeek' } as const, 0)
 const cfgTab = atom({ plugin: 'uso-por-sesion', key: 'cfgTab' } as const, 'sesiones')
 // Sesión cuyo botón ∞ espera el segundo toque de confirmación ('' = ninguna).
 const armed = atom({ plugin: 'uso-por-sesion', key: 'armed' } as const, '')
@@ -323,13 +325,14 @@ function historyChart(list: Bucket[], width: number, showBrake: boolean) {
 
 // Uso semanal en su periodo real (del inicio al reinicio semanal), con días marcados y
 // la proyección lineal al ritmo actual; hit = cuándo llegaría al 100 % antes del reinicio.
-function weeklyChart(list: HistoryBlock[], width: number, endIso: string, now: number, current: number | null): { svg: string; hit: number | null } {
+// En una semana pasada (past) no hay proyección ni raya de "ahora"; final = % con que terminó.
+function weeklyChart(list: HistoryBlock[], width: number, endIso: string, now: number, current: number | null, past = false): { svg: string; hit: number | null; final: number | null } {
   const ht = 130, top = 10, bottom = 22, left = 30, right = 8, plot = ht - top - bottom
   const end = Date.parse(endIso), start = end - SEVEN_DAYS
   const x = (t: number) => left + ((Math.min(end, Math.max(start, t)) - start) / SEVEN_DAYS) * (width - left - right)
   const y = (pct: number) => top + plot - (Math.min(100, pct) / 100) * plot
   const pts = list
-    .filter(b => b.weekly !== null && Date.parse(b.resetsAt) > start)
+    .filter(b => b.weekly !== null && Date.parse(b.resetsAt) > start && Date.parse(b.resetsAt) <= end)
     .map(b => ({ t: Math.min(now, Date.parse(b.resetsAt)), v: b.weekly! }))
   if (current !== null) pts.push({ t: now, v: current })
   pts.sort((a, b) => a.t - b.t)
@@ -347,10 +350,10 @@ function weeklyChart(list: HistoryBlock[], width: number, endIso: string, now: n
     if (x(d.getTime()) < width - right - 24) out += `<text x="${(+sx + 3).toFixed(1)}" y="${ht - 6}" fill="#c8c6bd">${esc(dayName(d.toISOString()))}</text>`
   }
   const nx = x(now).toFixed(1)
-  out += `<line x1="${nx}" x2="${nx}" y1="${top}" y2="${ht - bottom}" stroke="#8f8d85" stroke-width="1"/>`
+  if (!past) out += `<line x1="${nx}" x2="${nx}" y1="${top}" y2="${ht - bottom}" stroke="#8f8d85" stroke-width="1"/>`
   let hit: number | null = null
   const last = pts[pts.length - 1]
-  if (last && last.t > start && last.v > 0) {
+  if (!past && last && last.t > start && last.v > 0) {
     // Proyección: ritmo medio desde el inicio del periodo semanal.
     const rate = last.v / (last.t - start)
     const t100 = start + 100 / rate
@@ -365,8 +368,9 @@ function weeklyChart(list: HistoryBlock[], width: number, endIso: string, now: n
     out += `<path d="${path} L${x(last!.t).toFixed(1)},${y(0)} Z" fill="#a855f7" opacity="0.15"/>`
     out += `<path d="${path}" fill="none" stroke="#a855f7" stroke-width="2"/>`
     for (const p of pts) out += `<circle cx="${x(p.t).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="2.5" fill="#a855f7"/>`
+    if (past) out += `<text x="${(x(last!.t) + 4).toFixed(1)}" y="${(y(last!.v) - 5).toFixed(1)}" fill="#c8c6bd" font-size="9">${fmt(last!.v)} %</text>`
   }
-  return { svg: out + '</svg>', hit }
+  return { svg: out + '</svg>', hit, final: last?.v ?? null }
 }
 
 const leftShort = (iso: string | null, now: number) => left(iso, now).replace(' min', ' m')
@@ -1188,8 +1192,22 @@ export const register: Register = on => {
     const titles = [...new Set(all.filter(b => Date.now() - Date.parse(b.resetsAt) < 31 * 86400e3).flatMap(b => b.top.map(t => t.title)))]
     const width = Math.max(260, Math.min(900, (e.props.bodyColumns ?? 60) * 8))
     const snapNow = await read($, snapshot)
-    const weekly = snapNow?.weeklyResetsAt
-      ? { ...weeklyChart(all.slice().reverse(), width, snapNow.weeklyResetsAt, Date.now(), snapNow.weekly), end: snapNow.weeklyResetsAt }
+    const curReset = snapNow?.weeklyResetsAt ? Date.parse(snapNow.weeklyResetsAt) : 0
+    // Semanas con datos guardados: la actual siempre; las anteriores si tienen algún bloque.
+    const weekOpts: { value: string; label: string }[] = []
+    if (curReset) {
+      const oldest = all.length ? Math.min(...all.map(b => Date.parse(b.resetsAt))) : curReset
+      for (let k = 0; k < 52; k++) {
+        const end = curReset - k * SEVEN_DAYS
+        if (k > 0 && end <= oldest) break
+        const startIso = new Date(end - SEVEN_DAYS).toISOString(), endIso = new Date(end).toISOString()
+        weekOpts.push({ value: String(k), label: k === 0 ? L(`Esta semana (hasta ${dayHour(endIso)})`, `This week (until ${dayHour(endIso)})`) : L(`${shortDay(startIso)} – ${shortDay(endIso)}`, `${shortDay(startIso)} – ${shortDay(endIso)}`) })
+      }
+    }
+    const wk = Math.min(await read($, histWeek), Math.max(0, weekOpts.length - 1))
+    const wkEnd = curReset ? new Date(curReset - wk * SEVEN_DAYS).toISOString() : ''
+    const weekly = curReset
+      ? { ...weeklyChart(all.slice().reverse(), width, wkEnd, wk ? Date.parse(wkEnd) : Date.now(), wk ? null : snapNow!.weekly, wk > 0), end: wkEnd }
       : null
     const ranges = [
       { value: 'semana', label: L('Última semana', 'Last week') },
@@ -1218,18 +1236,25 @@ export const register: Register = on => {
           <Box flexDirection="column" gap="sm">
             <Text size="caption" weight="medium">{unit}</Text>
             <Svg source={historyChart(buckets, width, byBlock)} alt={L('Uso en el periodo', 'Usage in the period')} width={width} height={222} isInteractive />
-            {range === 'semana' && weekly && (
-              <Box flexDirection="column" gap="sm">
-                <Text size="caption" weight="medium">{L('Semanal · del inicio al reinicio del periodo', 'Weekly · from the start to the reset of the period')}</Text>
-                <Svg source={weekly.svg} alt={L('Uso semanal en el tiempo', 'Weekly usage over time')} width={width} height={130} isInteractive />
-                <Text size="caption" dimColor>{weekly.hit !== null
-                  ? L(`A este ritmo llegas al 100 % el ${dayName(new Date(weekly.hit).toISOString())} a las ${hhmm(new Date(weekly.hit).toISOString())}, antes del reinicio (${dayName(weekly.end)} ${hhmm(weekly.end)}).`, `At this pace you hit 100 % on ${dayName(new Date(weekly.hit).toISOString())} at ${hhmm(new Date(weekly.hit).toISOString())}, before the reset (${dayName(weekly.end)} ${hhmm(weekly.end)}).`)
-                  : L(`A este ritmo no llegas al 100 % antes del reinicio (${dayName(weekly.end)} ${hhmm(weekly.end)}).`, `At this pace you won't hit 100 % before the reset (${dayName(weekly.end)} ${hhmm(weekly.end)}).`)}
-                  {L(' Línea punteada: proyección lineal; raya gris: ahora.', ' Dashed line: linear projection; gray line: now.')}</Text>
-              </Box>
-            )}
             {byBlock && <Text size="caption" dimColor>{L(`Cada barra es una ventana de 5 h, rotulada con la hora en que se reinició; las líneas punteadas separan los días. Línea roja: freno del ${CFG.brakeAt} %.`, `Each bar is a 5-hour window, labeled with the time it reset; dashed lines separate days. Red line: ${CFG.brakeAt} % brake.`)}</Text>}
             {!byBlock && perSession && <Text size="caption" dimColor>{L('Cada barra suma los % de las ventanas de 5 h de ese día: 150 % equivale a una ventana y media gastada.', "Each bar adds up the % of that day's 5-hour windows: 150 % means one and a half windows used.")}</Text>}
+          </Box>
+        )}
+        {range === 'semana' && weekly && Svg && (
+          <Box flexDirection="column" gap="sm">
+            <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap="sm">
+              <Text size="caption" weight="medium">{L('Semanal · del inicio al reinicio del periodo', 'Weekly · from the start to the reset of the period')}</Text>
+              {Select && weekOpts.length > 1 && <Select key="week" label={L('Semana', 'Week')} options={weekOpts} value={String(wk)} onSelect={v => void update($, histWeek, () => Number(v))} />}
+            </Box>
+            <Svg source={weekly.svg} alt={L('Uso semanal en el tiempo', 'Weekly usage over time')} width={width} height={130} isInteractive />
+            <Text size="caption" dimColor>{wk > 0
+              ? (weekly.final !== null
+                ? L(`Esa semana terminó en ${fmt(weekly.final)} % (último dato guardado antes del reinicio del ${dayHour(weekly.end)}).`, `That week ended at ${fmt(weekly.final)} % (last value saved before the ${dayHour(weekly.end)} reset).`)
+                : L('No hay datos guardados de esa semana.', 'No data saved for that week.'))
+              : weekly.hit !== null
+              ? L(`A este ritmo llegas al 100 % el ${dayName(new Date(weekly.hit).toISOString())} a las ${hhmm(new Date(weekly.hit).toISOString())}, antes del reinicio (${dayName(weekly.end)} ${hhmm(weekly.end)}).`, `At this pace you hit 100 % on ${dayName(new Date(weekly.hit).toISOString())} at ${hhmm(new Date(weekly.hit).toISOString())}, before the reset (${dayName(weekly.end)} ${hhmm(weekly.end)}).`)
+              : L(`A este ritmo no llegas al 100 % antes del reinicio (${dayName(weekly.end)} ${hhmm(weekly.end)}).`, `At this pace you won't hit 100 % before the reset (${dayName(weekly.end)} ${hhmm(weekly.end)}).`)}
+              {wk === 0 && L(' Línea punteada: proyección lineal; raya gris: ahora.', ' Dashed line: linear projection; gray line: now.')}</Text>
           </Box>
         )}
       </Box>
