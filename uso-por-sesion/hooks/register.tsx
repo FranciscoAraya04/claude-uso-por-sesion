@@ -27,6 +27,11 @@ const histSession = atom({ plugin: 'uso-por-sesion', key: 'histSession' } as con
 const histGroup = atom({ plugin: 'uso-por-sesion', key: 'histGroup' } as const, '')
 // Semana del gráfico semanal: 0 = la actual, 1 = la anterior, etc.
 const histWeek = atom({ plugin: 'uso-por-sesion', key: 'histWeek' } as const, 0)
+// Costo de semanas pasadas (USD a precios de API), por fecha de reinicio; también se guarda en el almacén.
+const weekCosts = atom({ plugin: 'uso-por-sesion', key: 'weekCosts' } as const, {} as Record<string, number>)
+const WEEK_COSTS_KEY = 'costo-semanas'
+// Semanas cuyo costo se está calculando, para no lanzar el cálculo dos veces.
+const COSTING = new Set<string>()
 const cfgTab = atom({ plugin: 'uso-por-sesion', key: 'cfgTab' } as const, 'sesiones')
 // Sesión cuyo botón ∞ espera el segundo toque de confirmación ('' = ninguna).
 const armed = atom({ plugin: 'uso-por-sesion', key: 'armed' } as const, '')
@@ -449,7 +454,7 @@ async function refresh($: $T) {
     await update($, status, () => L(`Error al leer registros: ${stderr.slice(0, 120)}`, `Error reading logs: ${stderr.slice(0, 120)}`))
     return
   }
-  const scan = JSON.parse(stdout) as { sessions: { id: string; title: string | null; w: number }[]; weekly?: { id: string; title: string | null; ww: number }[]; titles?: Record<string, string> }
+  const scan = JSON.parse(stdout) as { sessions: { id: string; title: string | null; w: number }[]; weekly?: { id: string; title: string | null; ww: number }[]; titles?: Record<string, string>; usd?: { block: number; week: number } }
   const { sessions } = scan
   const titles = scan.titles ?? {}
   const total = sessions.reduce((s, x) => s + x.w, 0) || 1
@@ -509,6 +514,7 @@ async function refresh($: $T) {
     weeklyResetsAt: week?.resetsAt ?? null,
     current: shares.find(s => s.id === me)?.pct ?? 0,
     sessions: kept,
+    ...(scan.usd && week?.resetsAt ? { weekUsd: scan.usd.week } : {}),
     week: await Promise.all([
       ...weekList.slice(0, 12).map(w => shares.find(s => s.id === w.id) ?? { id: w.id, title: w.title ?? titles[w.id] ?? w.id.slice(0, 8), pct: 0, wpct: wpctOf(w.id) } as SessionShare),
       ...shares.filter(s => !weekList.slice(0, 12).some(w => w.id === s.id)),
@@ -590,6 +596,22 @@ async function stepWeekCap($: $T, id: string, dir: 1 | -1) {
   void refresh($).catch(() => {})
   await syncStop($)
 }
+
+// Calcula (una vez) el costo de una semana pasada leyendo los registros, y lo guarda.
+async function loadWeekCost($: $T, endIso: string) {
+  const saved = await $.store.get(WEEK_COSTS_KEY)
+  const all = saved && typeof saved === 'object' ? (saved as Record<string, number>) : {}
+  if (typeof all[endIso] !== 'number') {
+    const end = Date.parse(endIso)
+    const r = await $.process.run(['node', `${$.plugin.root}/hooks/scan.js`, 'cost', String(end - SEVEN_DAYS), String(end)], { timeoutMs: 120000 })
+    if (r.exitCode !== 0) return
+    all[endIso] = (JSON.parse(r.stdout) as { usd: number }).usd
+    await $.store.set(WEEK_COSTS_KEY, all)
+  }
+  await update($, weekCosts, () => ({ ...all }))
+}
+
+const usd = (n: number) => `US$ ${n >= 100 ? Math.round(n).toLocaleString(CFG.lang === 'en' ? 'en-US' : 'es-CL') : fmt(n)}`
 
 async function activeTest($: $T) {
   const t = await read($, test)
@@ -1205,7 +1227,14 @@ export const register: Register = on => {
       }
     }
     const wk = Math.min(await read($, histWeek), Math.max(0, weekOpts.length - 1))
+    const storedCosts = await $.store.get(WEEK_COSTS_KEY)
+    const costs = { ...(storedCosts && typeof storedCosts === 'object' ? (storedCosts as Record<string, number>) : {}), ...(await read($, weekCosts)) }
     const wkEnd = curReset ? new Date(curReset - wk * SEVEN_DAYS).toISOString() : ''
+    // Una semana pasada sin costo guardado se calcula en segundo plano (una vez por semana elegida).
+    if (wk > 0 && costs[wkEnd] === undefined && !COSTING.has(wkEnd)) {
+      COSTING.add(wkEnd)
+      void loadWeekCost($, wkEnd).catch(() => {}).finally(() => COSTING.delete(wkEnd))
+    }
     const weekly = curReset
       ? { ...weeklyChart(all.slice().reverse(), width, wkEnd, wk ? Date.parse(wkEnd) : Date.now(), wk ? null : snapNow!.weekly, wk > 0), end: wkEnd }
       : null
@@ -1255,6 +1284,16 @@ export const register: Register = on => {
               ? L(`A este ritmo llegas al 100 % el ${dayName(new Date(weekly.hit).toISOString())} a las ${hhmm(new Date(weekly.hit).toISOString())}, antes del reinicio (${dayName(weekly.end)} ${hhmm(weekly.end)}).`, `At this pace you hit 100 % on ${dayName(new Date(weekly.hit).toISOString())} at ${hhmm(new Date(weekly.hit).toISOString())}, before the reset (${dayName(weekly.end)} ${hhmm(weekly.end)}).`)
               : L(`A este ritmo no llegas al 100 % antes del reinicio (${dayName(weekly.end)} ${hhmm(weekly.end)}).`, `At this pace you won't hit 100 % before the reset (${dayName(weekly.end)} ${hhmm(weekly.end)}).`)}
               {wk === 0 && L(' Línea punteada: proyección lineal; raya gris: ahora.', ' Dashed line: linear projection; gray line: now.')}</Text>
+            {(() => {
+              const v = wk === 0 ? snapNow?.weekUsd : costs[wkEnd]
+              const text = v === undefined
+                ? (wk === 0 ? null : L('Gasto a precios de API: calculando… (puede tardar unos segundos)', 'Spend at API prices: calculating… (may take a few seconds)'))
+                : wk === 0
+                ? L(`Llevas gastado esta semana: ${usd(v)} a precios de API.`, `Spent so far this week: ${usd(v)} at API prices.`)
+                : L(`Gasto de esa semana: ${usd(v)} a precios de API.`, `Spent that week: ${usd(v)} at API prices.`)
+              return text && <Text size="caption" weight="medium">{text}</Text>
+            })()}
+            <Text size="caption" dimColor>{L('Estimación con los tokens de tus registros locales y los precios de lista por modelo; no incluye herramientas de servidor ni uso fuera de este computador. Con tu suscripción no pagas esto: sirve para comparar.', "Estimated from the tokens in your local logs and list prices per model; excludes server tools and usage outside this computer. Your subscription doesn't charge this: it's for comparison.")}</Text>
           </Box>
         )}
       </Box>

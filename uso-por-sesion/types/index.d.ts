@@ -12,10 +12,12 @@ export type Snapshot = {
   sessions: SessionShare[]
   // Uso semanal por sesión (para la vista semanal y el tope semanal).
   week?: SessionShare[]
+  // Costo estimado de la semana en curso, en USD a precios de API.
+  weekUsd?: number
 }
 
 declare module 'claude-code' {
   interface PluginState {
-    'uso-por-sesion': { snapshot: Snapshot | null; isOpen: boolean; isMin: boolean; nowMs: number; test: BrakeTest | null; resumeAt: number; isBraked: boolean; stoppedBy: string; warnedFor: string; warnedWeek: string; capView: string; selected: string; histRange: string; histSession: string; histGroup: string; histWeek: number; cfgTab: string; armed: string; status: string }
+    'uso-por-sesion': { snapshot: Snapshot | null; isOpen: boolean; isMin: boolean; nowMs: number; test: BrakeTest | null; resumeAt: number; isBraked: boolean; stoppedBy: string; warnedFor: string; warnedWeek: string; capView: string; selected: string; histRange: string; histSession: string; histGroup: string; histWeek: number; weekCosts: Record<string, number>; cfgTab: string; armed: string; status: string }
   }
 }

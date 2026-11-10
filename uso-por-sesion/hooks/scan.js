@@ -1,6 +1,8 @@
 // Reparte el consumo entre sesiones leyendo ~/.claude/projects: el del bloque de 5 h y el de la semana.
 // Uso: node scan.js <inicioBloqueMs> <cacheFile> [inicioSemanaMs]
-//   -> JSON { sessions: [{ id, title, w }], weekly: [{ id, title, ww }], titles: { id: title } }
+//   -> JSON { sessions: [{ id, title, w }], weekly: [{ id, title, ww }], titles: { id: title }, usd: { block, week } }
+// Costo de un periodo cualquiera (semanas pasadas, sin caché): node scan.js cost <desdeMs> <hastaMs> -> JSON { usd }
+// w, ww y usd están en USD a precios de lista de la API (estimación: no incluye herramientas de servidor).
 const fs = require('fs')
 const path = require('path')
 const os = require('os')
@@ -11,21 +13,29 @@ const sinceWeek = Number(process.argv[4]) || 0
 // Se guardan los mensajes desde el inicio más antiguo de los dos periodos.
 const keepFrom = sinceWeek ? Math.min(since, sinceWeek) : since
 const root = path.join(os.homedir(), '.claude', 'projects')
-// Versión del caché: la anterior solo guardaba 5 h, así que se relee todo una vez.
-const CACHE_V = 2
+// Versión del caché: cambia cuando cambia lo guardado o los precios, y entonces se relee todo una vez.
+const CACHE_V = 3
 
-// USD por millón de tokens: solo importan las proporciones entre modelos.
-const PRICE = {
-  opus: [5, 25, 0.5, 6.25],
-  sonnet: [3, 15, 0.3, 3.75],
-  haiku: [1, 5, 0.1, 1.25],
-}
+// USD por millón de tokens [entrada, salida, lectura de caché, escritura de caché 5 min], por modelo.
+// El primero que calce gana; un modelo desconocido usa el precio de Opus.
+const PRICES = [
+  [/fable-5-2|mythos-5-2/, [8, 40, 0.2, 10]],
+  [/fable|mythos/, [10, 50, 1, 12.5]],
+  [/opus-5-5/, [4, 20, 0.2, 5]],
+  [/opus/, [5, 25, 0.5, 6.25]],
+  [/sonnet-5-5/, [2, 10, 0.1, 2.5]],
+  [/sonnet-5/, [2, 10, 0.2, 2.5]],
+  [/sonnet/, [3, 15, 0.3, 3.75]],
+  [/haiku-5-5/, [0.1, 0.5, 0.01, 0.125]],
+  [/haiku/, [1, 5, 0.1, 1.25]],
+]
 const weight = (model, u) => {
-  const key = /haiku/.test(model) ? 'haiku' : /sonnet/.test(model) ? 'sonnet' : 'opus'
-  const [i, o, r, c] = PRICE[key]
+  const [i, o, r, c] = (PRICES.find(([re]) => re.test(model)) || [0, [5, 25, 0.5, 6.25]])[1]
   return ((u.input_tokens || 0) * i + (u.output_tokens || 0) * o +
     (u.cache_read_input_tokens || 0) * r + (u.cache_creation_input_tokens || 0) * c) / 1e6
 }
+
+if (process.argv[2] === 'cost') costMode(Number(process.argv[3]), Number(process.argv[4]))
 
 // El caché sirve si es de esta versión y guarda mensajes desde antes del periodo pedido.
 let cache = {}
@@ -91,7 +101,8 @@ const weekly = all.filter(s => s.ww > 0).sort((a, b) => b.ww - a.ww).map(({ id, 
 // Título de toda sesión con registro reciente, aunque no haya gastado nada en el periodo.
 const titles = {}
 for (const s of all) if (s.title) titles[s.id] = s.title
-process.stdout.write(JSON.stringify({ sessions, weekly, titles }))
+const usd = { block: all.reduce((a, s) => a + s.w, 0), week: all.reduce((a, s) => a + s.ww, 0) }
+process.stdout.write(JSON.stringify({ sessions, weekly, titles, usd }))
 
 function parseLine(line, entry) {
   if (!line.includes('"usage"') && !line.includes('-title"')) return
@@ -109,4 +120,36 @@ function parseLine(line, entry) {
 
 function safeList(dir) {
   try { return fs.readdirSync(dir) } catch { return [] }
+}
+
+// Suma el costo de los mensajes entre dos fechas leyendo todos los registros modificados desde entonces.
+function costMode(from, to) {
+  const seen = new Set()
+  let usd = 0
+  for (const proj of safeList(root)) {
+    const dir = path.join(root, proj)
+    const list = []
+    for (const name of safeList(dir)) {
+      if (name.endsWith('.jsonl')) list.push(path.join(dir, name))
+      for (const s of safeList(path.join(dir, name, 'subagents'))) if (s.endsWith('.jsonl')) list.push(path.join(dir, name, 'subagents', s))
+    }
+    for (const file of list) {
+      try { if (fs.statSync(file).mtimeMs < from) continue } catch { continue }
+      let text
+      try { text = fs.readFileSync(file, 'utf8') } catch { continue }
+      for (const line of text.split('\n')) {
+        if (!line.includes('"usage"')) continue
+        let j
+        try { j = JSON.parse(line) } catch { continue }
+        const m = j.message
+        if (j.type !== 'assistant' || !m || !m.usage || !m.id || seen.has(m.id)) continue
+        const ts = Date.parse(j.timestamp)
+        if (!(ts >= from && ts < to)) continue
+        seen.add(m.id)
+        usd += weight(m.model || '', m.usage)
+      }
+    }
+  }
+  process.stdout.write(JSON.stringify({ usd }))
+  process.exit(0)
 }
