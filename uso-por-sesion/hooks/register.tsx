@@ -907,6 +907,7 @@ const cmdUsoConfig: Hook<'command.run'> = async $ => {
 
 const cmdUsoHistorial: Hook<'command.run'> = async $ => {
   await update($, cfgTab, () => 'historial')
+  void refresh($).catch(() => {})
   await $.ui.open({ id: HISTORY_PANE, title: paneTitle() })
   return { text: L('Historial de uso abierto.', 'Usage history opened.') }
 }
@@ -1017,7 +1018,7 @@ export const register: Register = on => {
     const tabs = (
       <Box flexDirection="row" gap="sm">
         {[['sesiones', L('Sesiones', 'Sessions')], ['ajustes', L('⚙ Ajustes', '⚙ Settings')], ['historial', L('Historial', 'History')], ['ayuda', L('Comandos', 'Commands')]].map(([id, label]) => (
-          <Button key={`tab-${id}`} label={label!} variant={tab === id ? 'primary' : 'secondary'} onPress={() => void update($, cfgTab, () => id!).then(() => (id === 'sesiones' ? refresh($).catch(() => {}) : undefined))} />
+          <Button key={`tab-${id}`} label={label!} variant={tab === id ? 'primary' : 'secondary'} onPress={() => void update($, cfgTab, () => id!).then(() => (id === 'sesiones' || id === 'historial' ? refresh($).catch(() => {}) : undefined))} />
         ))}
       </Box>
     )
