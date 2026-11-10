@@ -348,7 +348,9 @@ function weeklyChart(list: HistoryBlock[], width: number, endIso: string, now: n
   // Medianoches dentro del periodo: separador y nombre del día que empieza.
   const d = new Date(start)
   d.setHours(24, 0, 0, 0)
-  out += `<text x="${left + 2}" y="${ht - 6}" fill="#c8c6bd">${esc(dayName(new Date(start).toISOString()))}</text>`
+  // El día en que empieza la semana solo se rotula si cabe antes de la primera medianoche
+  // (con reinicio a media tarde, ese tramo es angosto y los nombres se encimarían).
+  if (x(d.getTime()) - left >= 44) out += `<text x="${left + 2}" y="${ht - 6}" fill="#c8c6bd">${esc(dayName(new Date(start).toISOString()))}</text>`
   for (; d.getTime() < end; d.setDate(d.getDate() + 1)) {
     const sx = x(d.getTime()).toFixed(1)
     out += `<line x1="${sx}" x2="${sx}" y1="${top}" y2="${ht - bottom + 4}" stroke="#55534e" stroke-width="1" stroke-dasharray="2 3"/>`
