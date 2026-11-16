@@ -51,7 +51,7 @@ const sysLang = (): Lang => {
     return 'en'
   }
 }
-const NUM_DEFAULTS = { brakeAt: 83, closeMargin: 2, marginMin: 2, defaultCap: 35, warnPct: 80, maxBypass: 1, capStep: 10, sleepStart: 23, sleepEnd: 7 }
+const NUM_DEFAULTS = { brakeAt: 83, closeMargin: 2, marginMin: 2, defaultCap: 35, warnPct: 80, maxBypass: 1, capStep: 10, sleepOn: 1, sleepStart: 23, sleepEnd: 7 }
 type NumKey = keyof typeof NUM_DEFAULTS
 const DEFAULTS: typeof NUM_DEFAULTS & { lang: Lang } = { ...NUM_DEFAULTS, lang: sysLang() }
 type Cfg = typeof DEFAULTS
@@ -616,11 +616,11 @@ async function loadWeekCost($: $T, endIso: string) {
 
 const usd = (n: number) => `US$ ${n >= 100 ? Math.round(n).toLocaleString(CFG.lang === 'en' ? 'en-US' : 'es-CL') : fmt(n)}`
 
-// Horario de sueño (horas locales; inicio = fin lo desactiva). Si el bloque de 5 h se reinicia dentro de él,
+// Horario de sueño (horas locales; se apaga con su interruptor o con inicio = fin). Si el bloque de 5 h se reinicia dentro de él,
 // el freno global y los topes de 5 h por sesión no aplican: la reserva no se usaría mientras duermes.
 // Las sesiones igual se detienen en 100 % − margen de cierre, antes del corte de Anthropic.
 function sleepsThrough(resetIso: string | null | undefined) {
-  if (!resetIso || CFG.sleepStart === CFG.sleepEnd) return false
+  if (!resetIso || !CFG.sleepOn || CFG.sleepStart === CFG.sleepEnd) return false
   const d = new Date(resetIso)
   const h = d.getHours() + d.getMinutes() / 60
   return CFG.sleepStart < CFG.sleepEnd ? h >= CFG.sleepStart && h < CFG.sleepEnd : h >= CFG.sleepStart || h < CFG.sleepEnd
@@ -1151,7 +1151,7 @@ export const register: Register = on => {
         { k: 'defaultCap', label: L('Tope por defecto', 'Default cap'), hint: L('Tope con que parte toda sesión que no tenga uno propio. 0 = sin tope.', "Cap every session starts with when it has none of its own. 0 = no cap."), step: 5, min: 0, max: 100, show: v => (v ? `${v} %` : L('sin tope', 'no cap')) },
         { k: 'capStep', label: L('Paso de − / +', '− / + step'), hint: L('Cuánto sube o baja el tope de una sesión con cada toque de − / +.', "How much each − / + press raises or lowers a session's cap."), step: 1, min: 1, max: 50, show: v => `${v} %` },
         { k: 'maxBypass', label: L('Sesiones sin freno (∞)', 'Sessions without brake (∞)'), hint: L('Cuántas sesiones pueden ignorar el freno global a la vez. 0 = función desactivada.', 'How many sessions can ignore the global brake at once. 0 = feature off.'), step: 1, min: 0, max: 3, show: v => (v ? String(v) : L('desactivado', 'off')) },
-        { k: 'sleepStart', label: L('Dormir desde', 'Sleep from'), hint: L('Si el bloque de 5 h se reinicia entre esta hora y la de abajo, no se aplican el freno global ni los topes de 5 h: puedes dormir sin que las sesiones se corten antes de tiempo. Igual se detienen en 100 % menos el margen de cierre. Misma hora en los dos = desactivado.', "If the 5-hour block resets between this time and the one below, the global brake and 5-hour caps don't apply, so sessions aren't cut short while you sleep. They still stop at 100 % minus the close margin. Same time in both = off."), step: 1, min: 0, max: 23, show: v => `${String(v).padStart(2, '0')}:00` },
+        { k: 'sleepStart', label: L('Dormir desde', 'Sleep from'), hint: L('Inicio del horario de sueño (hora local).', "Start of sleep hours (local time)."), step: 1, min: 0, max: 23, show: v => `${String(v).padStart(2, '0')}:00` },
         { k: 'sleepEnd', label: L('Dormir hasta', 'Sleep until'), hint: L('Fin del horario de sueño (hora local).', 'End of sleep hours (local time).'), step: 1, min: 0, max: 23, show: v => `${String(v).padStart(2, '0')}:00` },
         { k: 'warnPct', label: L('Aviso del tope', 'Cap warning'), hint: L('Avisa cuando una sesión llega a este % de su tope.', 'Warns when a session reaches this % of its cap.'), step: 5, min: 50, max: 100, show: v => L(`${v} % del tope`, `${v} % of cap`) },
       ]
@@ -1164,7 +1164,8 @@ export const register: Register = on => {
             <Button key="lang-es" label="Español" variant={cfg.lang === 'es' ? 'primary' : 'secondary'} onPress={() => void set('lang', 'es')} />
             <Button key="lang-en" label="English" variant={cfg.lang === 'en' ? 'primary' : 'secondary'} onPress={() => void set('lang', 'en')} />
           </Box>
-          {rows.map(r => (
+          {(() => {
+            const row = (r: (typeof rows)[number]) => (
             <Box key={r.k} flexDirection="column">
               <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
                 <Text weight="medium">{r.label}</Text>
@@ -1175,7 +1176,25 @@ export const register: Register = on => {
               </Box>
               <Text size="caption" dimColor>{r.hint}{cfg[r.k] === DEFAULTS[r.k] ? '' : L(` Por defecto: ${r.show(DEFAULTS[r.k])}.`, ` Default: ${r.show(DEFAULTS[r.k])}.`)}</Text>
             </Box>
-          ))}
+            )
+            const isSleep = (k: NumKey) => k === 'sleepStart' || k === 'sleepEnd'
+            const rule = <Text dimColor wrap="truncate">{'─'.repeat(Math.max(20, Math.min(120, (e.props.bodyColumns ?? 60) - 4)))}</Text>
+            return (
+              <Box flexDirection="column" gap="sm">
+                <Text weight="semibold">{L('Freno y topes', 'Brake and caps')}</Text>
+                {rows.filter(r => !isSleep(r.k)).map(row)}
+                {rule}
+                <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
+                  <Text weight="semibold">☾ {L('Horario de sueño', 'Sleep hours')}</Text>
+                  <Box flexGrow={1} />
+                  <Button key="sleep-on" label={cfg.sleepOn ? L('Activado', 'On') : L('Desactivado', 'Off')} variant={cfg.sleepOn ? 'primary' : 'secondary'} onPress={() => void set('sleepOn', cfg.sleepOn ? 0 : 1)} />
+                </Box>
+                <Text size="caption" dimColor>{L('Si el bloque de 5 h se reinicia dentro de este horario, no se aplican el freno global ni los topes de 5 h: las sesiones siguen mientras duermes y se detienen recién en 100 % menos el margen de cierre, antes del corte de Anthropic. Los topes semanales siguen aplicando. En la franja lo indica una luna ☾.', "If the 5-hour block resets within these hours, the global brake and 5-hour caps don't apply: sessions keep going while you sleep and only stop at 100 % minus the close margin, before Anthropic's cutoff. Weekly caps still apply. A moon ☾ on the band shows it.")}</Text>
+                {cfg.sleepOn ? rows.filter(r => isSleep(r.k)).map(row) : null}
+                {rule}
+              </Box>
+            )
+          })()}
           <Box flexDirection="row" gap="sm">
             <Button key="cfg-reset" label={L('Restaurar valores por defecto', 'Restore defaults')} onPress={() => void $.store.set(CFG_KEY, { ...DEFAULTS, lang: CFG.lang }).then(() => set('brakeAt', DEFAULTS.brakeAt))} />
           </Box>
@@ -1425,7 +1444,7 @@ export const register: Register = on => {
             return (
               <Box flexDirection="row" alignItems="center" gap="xs">
                 {dot}
-                {snap.resetsAt && sleepsThrough(snap.resetsAt) && <Text size="caption" color="#a5b4fc" wrap="truncate">{mode === 'narrow' ? '☾' : L('☾ sin freno (sueño)', '☾ no brake (sleep)')}</Text>}
+                {snap.resetsAt && sleepsThrough(snap.resetsAt) && <Text size="caption" color="#a5b4fc">☾</Text>}
                 <Text size="caption" dimColor wrap="truncate">{!snap.resetsAt ? (mode === 'wide' ? L('bloque nuevo · empieza con tu próximo mensaje', 'new block · starts with your next message') : L('bloque nuevo', 'new block')) : mode === 'wide' ? L(`se reinicia en ${left(snap.resetsAt, now)}`, `resets in ${left(snap.resetsAt, now)}`) : leftShort(snap.resetsAt, now)}</Text>
               </Box>
             )

@@ -67,7 +67,7 @@ En **⚙ Configuración → Ajustes** cada persona ajusta con − / +:
 | Tope por defecto | 35 % | Tope de toda sesión sin uno propio (0 = sin tope). |
 | Paso de − / + | 10 % | Cuánto sube o baja el tope de una sesión con cada toque. |
 | Sesiones sin freno (∞) | 1 | Cuántas pueden ignorar el freno global a la vez (0 = desactivado). |
-| Dormir desde / hasta | 23:00 – 07:00 | Si el bloque de 5 h se reinicia dentro de ese horario, no aplican el freno global ni los topes de 5 h (las sesiones igual paran en 100 % − margen de cierre). Misma hora en ambos = desactivado. |
+| Dormir desde / hasta | 23:00 – 07:00 | Si el bloque de 5 h se reinicia dentro de ese horario, no aplican el freno global ni los topes de 5 h (las sesiones igual paran en 100 % − margen de cierre). Se enciende o apaga con su interruptor (sección **☾ Horario de sueño**, activado por defecto); en la franja lo indica una luna ☾. |
 | Aviso del tope | 80 % del tope | Cuándo avisar que una sesión se acerca a su tope. |
 | Idioma | el del sistema | Español o inglés. |
 
