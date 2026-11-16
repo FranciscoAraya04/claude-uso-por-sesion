@@ -6,7 +6,7 @@ const BAND = {
 } as const
 
 test('tocar ∞ lo activa y la fila cambia', async ($, on) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }]])
   const resetsAt = new Date(Date.now() + 3600e3).toISOString()
   on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: 40, resetsAt }] } }))
   on('session.id', () => ({ value: 'yo' }))
@@ -31,7 +31,7 @@ test('tocar ∞ lo activa y la fila cambia', async ($, on) => {
 })
 
 test('con el máximo de ∞ activo, la otra fila se dibuja igual', async ($, on) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }]])
   const resetsAt = new Date(Date.now() + 3600e3).toISOString()
   store.set('sinfreno:yo', resetsAt)
   on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: 40, resetsAt }] } }))
@@ -51,7 +51,7 @@ test('con el máximo de ∞ activo, la otra fila se dibuja igual', async ($, on)
 })
 
 test('el ∞ sigue activo aunque la hora de reinicio varíe unos segundos', async ($, on) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }]])
   const base = Date.now() + 3600e3
   let n = 0
   on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: 40, resetsAt: new Date(base + (n++ % 3) * 1000).toISOString() }] } }))
@@ -75,7 +75,7 @@ test('el ∞ sigue activo aunque la hora de reinicio varíe unos segundos', asyn
 })
 
 test('con poco espacio la franja muestra las que caben y la pestaña Sesiones todas', async ($, on) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }]])
   const resetsAt = new Date(Date.now() + 3600e3).toISOString()
   const sessions = Array.from({ length: 8 }, (_, i) => ({ id: `s${i}`, title: `Sesión ${i}`, w: 8 - i }))
   on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: 40, resetsAt }] } }))
@@ -104,7 +104,7 @@ test('con poco espacio la franja muestra las que caben y la pestaña Sesiones to
 })
 
 test('pasado el reinicio la franja muestra el bloque nuevo en 0', async ($, on) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }]])
   const resetsAt = new Date(Date.now() - 60000).toISOString()
   on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: 52, resetsAt }] } }))
   on('session.id', () => ({ value: 'yo' }))
@@ -122,7 +122,7 @@ test('pasado el reinicio la franja muestra el bloque nuevo en 0', async ($, on) 
 })
 
 test('una sesión recién abierta usa los últimos límites guardados', async ($, on) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }]])
   const resetsAt = new Date(Date.now() + 3600e3).toISOString()
   store.set('ultimo-limite', { five: { percentUsed: 47, resetsAt } })
   on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [] } }))
@@ -156,7 +156,7 @@ function setup(on: Parameters<Parameters<typeof test>[1]>[1], store: Map<string,
 }
 
 test('una sesión que llegó a su tope muestra por qué y el botón la reanuda', async ($, on) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }], ['tope:otra', 20]])
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }], ['tope:otra', 20]])
   setup(on, store, 50, [{ id: 'otra', title: 'Otra', w: 3 }, { id: 'yo', title: 'Mía', w: 2 }])
   await $.command.run({ command: 'uso-limite', args: '90' })
   const ui = await $.ui.mount(BAND)
@@ -170,7 +170,7 @@ test('una sesión que llegó a su tope muestra por qué y el botón la reanuda',
 })
 
 test('una sesión pausada dice "Pausada por ti" y Reanudar quita la pausa', async ($, on) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }], ['pausa:otra', true]])
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }], ['pausa:otra', true]])
   setup(on, store, 30, [{ id: 'otra', title: 'Otra', w: 1 }, { id: 'yo', title: 'Mía', w: 1 }])
   await $.command.run({ command: 'uso-limite', args: '90' })
   const ui = await $.ui.mount(BAND)
@@ -182,7 +182,7 @@ test('una sesión pausada dice "Pausada por ti" y Reanudar quita la pausa', asyn
 })
 
 test('la sesión actual entra al desglose aunque no sea de las que más gastan', async ($, on) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }]])
   setup(on, store, 30, [{ id: 'a', title: 'A', w: 9 }, { id: 'b', title: 'B', w: 8 }, { id: 'c', title: 'C', w: 7 }, { id: 'd', title: 'D', w: 6 }, { id: 'yo', title: 'Mía', w: 1 }])
   await $.command.run({ command: 'uso-limite', args: '90' })
   const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, maxRows: 13 } })
@@ -193,7 +193,7 @@ test('la sesión actual entra al desglose aunque no sea de las que más gastan',
 })
 
 test('una sesión abierta sin uso aparece con el nombre de su carpeta', async ($, on) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }], ['activas', { nueva: { folder: 'linkedin', seen: Date.now() } }]])
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }], ['activas', { nueva: { folder: 'linkedin', seen: Date.now() } }]])
   setup(on, store, 30, [{ id: 'yo', title: 'Mía', w: 1 }])
   on('session.cwd', () => ({ value: 'C:/x/proyecto' }))
   await $.command.run({ command: 'uso-limite', args: '90' })
@@ -221,7 +221,7 @@ function setupWeek(on: Parameters<Parameters<typeof test>[1]>[1], store: Map<str
 }
 
 test('con tope semanal alcanzado, la franja dice "tope semanal" y la fila se puede reanudar', async ($, on) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }], ['tope-sem:yo', 30]])
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }], ['tope-sem:yo', 30]])
   const { weekReset } = setupWeek(on, store, {
     sessions: [{ id: 'yo', title: 'Mía', w: 1 }, { id: 'otra', title: 'Otra', w: 1 }],
     weekly: [{ id: 'yo', title: 'Mía', ww: 6 }, { id: 'otra', title: 'Otra', ww: 4 }],
@@ -238,7 +238,7 @@ test('con tope semanal alcanzado, la franja dice "tope semanal" y la fila se pue
 })
 
 test('el aviso semanal aparece cerca del tope y /uso-limite semanal lo ajusta', async ($, on) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }]])
   const { toasts } = setupWeek(on, store, {
     sessions: [{ id: 'yo', title: 'Mía', w: 1 }],
     weekly: [{ id: 'yo', title: 'Mía', ww: 1 }, { id: 'otra', title: 'Otra', ww: 1 }],
@@ -253,7 +253,7 @@ test('el aviso semanal aparece cerca del tope y /uso-limite semanal lo ajusta', 
 })
 
 test('una sesión abierta sin uso en el bloque muestra su título real', async ($, on) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }], ['activas', { otra: { folder: 'Reportes', seen: Date.now() } }]])
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }], ['activas', { otra: { folder: 'Reportes', seen: Date.now() } }]])
   setupWeek(on, store, { sessions: [{ id: 'yo', title: 'Mía', w: 1 }], weekly: [], titles: { yo: 'Mía', otra: 'Proyecto minería' } })
   await $.command.run({ command: 'uso-limite', args: '90' })
   const ui = await $.ui.mount(BAND)
@@ -264,7 +264,7 @@ test('una sesión abierta sin uso en el bloque muestra su título real', async (
 })
 
 test('el gráfico semanal permite ver una semana anterior', async ($, on) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }], ['historial', [
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }], ['historial', [
     { resetsAt: new Date(Date.now() - 2 * 86400e3).toISOString(), pct: 40, weekly: 71, top: [] },
     { resetsAt: new Date(Date.now() - 5 * 86400e3).toISOString(), pct: 30, weekly: 40, top: [] },
   ]]])

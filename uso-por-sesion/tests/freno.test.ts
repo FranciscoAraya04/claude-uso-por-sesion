@@ -4,7 +4,7 @@ const reset = () => new Date(Date.now() + 3600e3).toISOString()
 
 // Motor simulado: uso del bloque, id de sesión y un almacén compartido en memoria.
 const engine = (on: Parameters<Parameters<typeof test>[1]>[1], pct: number) => {
-  const store = new Map<string, unknown>([['config', { lang: 'es' }]])
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }]])
   const resetsAt = reset()
   on('session.usage', () => ({
     value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: pct, resetsAt }] },
@@ -103,7 +103,7 @@ test('con datos, el historial dibuja gráficos', async ($, on) => {
 
 test('el freno respeta el % configurado', async ($, on) => {
   const { store } = engine(on, 84)
-  store.set('config', { lang: 'es', brakeAt: 90 })
+  store.set('config', { lang: 'es', brakeAt: 90, sleepStart: 0, sleepEnd: 0 })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: {} }))
   on('clock.every', () => ({ value: {} }))
@@ -142,4 +142,25 @@ test('/uso-sin-freno activa el ∞ de esta sesión', async ($, on) => {
   const { store, resetsAt } = engine(on, 10)
   await $.command.run({ command: 'uso-sin-freno', args: '' })
   expect(store.get('sinfreno:yo')).toBe(resetsAt)
+})
+
+test('en horario de sueño el freno global no aplica, pero sí el corte antes del 100 %', async ($, on) => {
+  const reset = new Date(); reset.setHours(3, 0, 0, 0); if (reset.getTime() < Date.now()) reset.setDate(reset.getDate() + 1)
+  const resetsAt = reset.toISOString()
+  let pct = 90
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 23, sleepEnd: 7 }], ['tope:yo', 0]])
+  on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: pct, resetsAt }] } }))
+  on('session.id', () => ({ value: 'yo' }))
+  on('store.get', (_, e) => ({ value: store.get(e.key) }))
+  on('store.set', (_, e) => (store.set(e.key, e.value), { value: undefined }))
+  on('store.delete', (_, e) => (store.delete(e.key), { value: undefined }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ sessions: [{ id: 'yo', title: 'Mía', w: 1 }] }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: Date.now() }))
+  on('tool.call', () => ({ result: {} }))
+  const ok = await $.tool.call({ tool: 'Bash', command: 'ls' })
+  expect(JSON.stringify(ok)).not.toContain('Freno de uso')
+  pct = 99
+  const r = await $.tool.call({ tool: 'Bash', command: 'ls' })
+  expect(JSON.stringify(r)).toContain('Límite real cerca')
 })

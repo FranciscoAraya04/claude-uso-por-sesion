@@ -75,6 +75,7 @@ For commands with an argument, press **Esc** before Enter to close the suggestio
 | Default cap | 35 % | Cap for any session without its own (0 = no cap). |
 | − / + step | 10 % | How much each tap changes a session's cap. |
 | No-brake sessions (∞) | 1 | How many sessions can ignore the global brake at once (0 = off). |
+| Sleep from / until | 23:00 – 07:00 | If the 5-hour block resets within these hours, the global brake and 5-hour caps don't apply (sessions still stop at 100 % minus the close margin). Same time in both = off. |
 | Cap warning | 80 % of cap | When to warn that a session is close to its cap. |
 | Language | system | English or Spanish. |
 

@@ -51,7 +51,7 @@ const sysLang = (): Lang => {
     return 'en'
   }
 }
-const NUM_DEFAULTS = { brakeAt: 83, closeMargin: 2, marginMin: 2, defaultCap: 35, warnPct: 80, maxBypass: 1, capStep: 10 }
+const NUM_DEFAULTS = { brakeAt: 83, closeMargin: 2, marginMin: 2, defaultCap: 35, warnPct: 80, maxBypass: 1, capStep: 10, sleepStart: 23, sleepEnd: 7 }
 type NumKey = keyof typeof NUM_DEFAULTS
 const DEFAULTS: typeof NUM_DEFAULTS & { lang: Lang } = { ...NUM_DEFAULTS, lang: sysLang() }
 type Cfg = typeof DEFAULTS
@@ -496,13 +496,14 @@ async function refresh($: $T) {
   if (five.resetsAt) {
     const until = new Date(Date.parse(five.resetsAt) + resumeMargin()).toISOString()
     const approved = sameBlock(await $.store.get(APPROVED_KEY), five.resetsAt)
+    const night = sleepsThrough(five.resetsAt)
     for (const sh of shares) {
       if ((sh as { stop?: string }).stop === 'semanal') continue
       const ok = (k: string) => $.store.get(k).then(v => sameBlock(v, five.resetsAt))
       let stop: 'pausa' | 'tope' | 'freno' | undefined
       if (sh.paused) stop = 'pausa'
-      else if (sh.bypass ? five.percentUsed >= 100 - CFG.closeMargin : five.percentUsed >= CFG.brakeAt && !approved && !(await ok(brakeOkKey(sh.id)))) stop = 'freno'
-      else if (sh.cap !== undefined && sh.pct >= Math.max(0, sh.cap - CFG.closeMargin) && !(await ok(capOkKey(sh.id)))) stop = 'tope'
+      else if (sh.bypass || night ? five.percentUsed >= 100 - CFG.closeMargin : five.percentUsed >= CFG.brakeAt && !approved && !(await ok(brakeOkKey(sh.id)))) stop = 'freno'
+      else if (!night && sh.cap !== undefined && sh.pct >= Math.max(0, sh.cap - CFG.closeMargin) && !(await ok(capOkKey(sh.id)))) stop = 'tope'
       if (stop) Object.assign(sh, { stop, ...(stop === 'pausa' ? {} : { until }) })
     }
   }
@@ -615,6 +616,16 @@ async function loadWeekCost($: $T, endIso: string) {
 
 const usd = (n: number) => `US$ ${n >= 100 ? Math.round(n).toLocaleString(CFG.lang === 'en' ? 'en-US' : 'es-CL') : fmt(n)}`
 
+// Horario de sueño (horas locales; inicio = fin lo desactiva). Si el bloque de 5 h se reinicia dentro de él,
+// el freno global y los topes de 5 h por sesión no aplican: la reserva no se usaría mientras duermes.
+// Las sesiones igual se detienen en 100 % − margen de cierre, antes del corte de Anthropic.
+function sleepsThrough(resetIso: string | null | undefined) {
+  if (!resetIso || CFG.sleepStart === CFG.sleepEnd) return false
+  const d = new Date(resetIso)
+  const h = d.getHours() + d.getMinutes() / 60
+  return CFG.sleepStart < CFG.sleepEnd ? h >= CFG.sleepStart && h < CFG.sleepEnd : h >= CFG.sleepStart || h < CFG.sleepEnd
+}
+
 async function activeTest($: $T) {
   const t = await read($, test)
   if (t && Date.parse(t.resetsAt) + resumeMargin() < Date.now()) {
@@ -633,6 +644,8 @@ async function limit($: $T) {
 
 // Qué detiene a esta sesión ahora: una pausa, el freno global o su tope propio.
 async function stopReason($: $T): Promise<{ kind: string; text: string; until?: number } | null> {
+  // Ajustes al día: el horario de sueño y el freno dependen de ellos.
+  await loadCfg($)
   const me = await $.session.id()
   if (await $.store.get(pauseKey(me))) {
     return { kind: 'pausa', text: L(`Sesión pausada con ${C('uso-pausar')}. Se reanuda con ${C('uso-reanudar')}.`, `Session paused with ${C('uso-pausar')}. Resume it with ${C('uso-reanudar')}.`) }
@@ -651,19 +664,24 @@ async function stopReason($: $T): Promise<{ kind: string; text: string; until?: 
   if (!l || Date.parse(l.resetsAt) + resumeMargin() <= Date.now()) return null
   const resumeAt = hhmm(new Date(Date.parse(l.resetsAt) + resumeMargin()).toISOString())
   const bypass = sameBlock(await $.store.get(bypassKey(me)), l.resetsAt)
+  const night = sleepsThrough(l.resetsAt)
+  if (night && !bypass && l.pct >= 100 - CFG.closeMargin) {
+    return { kind: 'freno', text: L(`Límite real cerca: el bloque de 5 h va en ${fmt(l.pct)} % (horario de sueño: sin freno global ni topes de 5 h). La sesión se detiene antes del corte de Anthropic y se reanuda sola a las ${resumeAt}.`,
+      `Real limit close: the 5-hour block is at ${fmt(l.pct)} % (sleep hours: no global brake or 5-hour caps). The session stops before Anthropic's cutoff and resumes on its own at ${resumeAt}.`) }
+  }
   if (bypass && l.pct >= 100 - CFG.closeMargin) {
     return { kind: 'freno', text: L(`Límite real cerca: el bloque de 5 h va en ${fmt(l.pct)} % y esta sesión (sin freno global) se detiene antes del corte de Anthropic. Se reanuda sola a las ${resumeAt}.`,
       `Real limit close: the 5-hour block is at ${fmt(l.pct)} % and this session (no global brake) stops before Anthropic's cutoff. It resumes on its own at ${resumeAt}.`) }
   }
   const brakeOk = bypass || sameBlock(await $.store.get(APPROVED_KEY), l.resetsAt) || sameBlock(await $.store.get(brakeOkKey(me)), l.resetsAt)
-  if (l.pct >= CFG.brakeAt && !brakeOk) {
+  if (!night && l.pct >= CFG.brakeAt && !brakeOk) {
     const free = ((await read($, snapshot))?.sessions ?? []).filter(s => s.bypass).map(s => s.title)
     return { kind: 'freno', text: L(`Freno de uso: el bloque de 5 h va en ${fmt(l.pct)} % (freno ${CFG.brakeAt} %).${free.length ? ` Sigue sin freno: ${free.join(', ')}.` : ''} Se reanuda sola a las ${resumeAt}; ${C('uso-continuar')} la libera antes.`,
       `Usage brake: the 5-hour block is at ${fmt(l.pct)} % (brake ${CFG.brakeAt} %).${free.length ? ` Still without brake: ${free.join(', ')}.` : ''} It resumes on its own at ${resumeAt}; ${C('uso-continuar')} releases it sooner.`) }
   }
   const cap = await capOf($, me)
   const mine = (await read($, snapshot))?.current ?? 0
-  if (cap !== undefined && mine >= Math.max(0, cap - CFG.closeMargin) && !sameBlock(await $.store.get(capOkKey(me)), l.resetsAt)) {
+  if (!night && cap !== undefined && mine >= Math.max(0, cap - CFG.closeMargin) && !sameBlock(await $.store.get(capOkKey(me)), l.resetsAt)) {
     return { kind: 'tope', text: L(`Tope de esta sesión: lleva ${fmt(mine)} % del bloque de 5 h (tope ${fmt(cap)} %). Se reanuda sola tras el reinicio; ${C('uso-continuar')} la libera antes.`,
       `This session's cap: it has used ${fmt(mine)} % of the 5-hour block (cap ${fmt(cap)} %). It resumes on its own after the reset; ${C('uso-continuar')} releases it sooner.`) }
   }
@@ -1133,6 +1151,8 @@ export const register: Register = on => {
         { k: 'defaultCap', label: L('Tope por defecto', 'Default cap'), hint: L('Tope con que parte toda sesión que no tenga uno propio. 0 = sin tope.', "Cap every session starts with when it has none of its own. 0 = no cap."), step: 5, min: 0, max: 100, show: v => (v ? `${v} %` : L('sin tope', 'no cap')) },
         { k: 'capStep', label: L('Paso de − / +', '− / + step'), hint: L('Cuánto sube o baja el tope de una sesión con cada toque de − / +.', "How much each − / + press raises or lowers a session's cap."), step: 1, min: 1, max: 50, show: v => `${v} %` },
         { k: 'maxBypass', label: L('Sesiones sin freno (∞)', 'Sessions without brake (∞)'), hint: L('Cuántas sesiones pueden ignorar el freno global a la vez. 0 = función desactivada.', 'How many sessions can ignore the global brake at once. 0 = feature off.'), step: 1, min: 0, max: 3, show: v => (v ? String(v) : L('desactivado', 'off')) },
+        { k: 'sleepStart', label: L('Dormir desde', 'Sleep from'), hint: L('Si el bloque de 5 h se reinicia entre esta hora y la de abajo, no se aplican el freno global ni los topes de 5 h: puedes dormir sin que las sesiones se corten antes de tiempo. Igual se detienen en 100 % menos el margen de cierre. Misma hora en los dos = desactivado.', "If the 5-hour block resets between this time and the one below, the global brake and 5-hour caps don't apply, so sessions aren't cut short while you sleep. They still stop at 100 % minus the close margin. Same time in both = off."), step: 1, min: 0, max: 23, show: v => `${String(v).padStart(2, '0')}:00` },
+        { k: 'sleepEnd', label: L('Dormir hasta', 'Sleep until'), hint: L('Fin del horario de sueño (hora local).', 'End of sleep hours (local time).'), step: 1, min: 0, max: 23, show: v => `${String(v).padStart(2, '0')}:00` },
         { k: 'warnPct', label: L('Aviso del tope', 'Cap warning'), hint: L('Avisa cuando una sesión llega a este % de su tope.', 'Warns when a session reaches this % of its cap.'), step: 5, min: 50, max: 100, show: v => L(`${v} % del tope`, `${v} % of cap`) },
       ]
       return (
@@ -1405,6 +1425,7 @@ export const register: Register = on => {
             return (
               <Box flexDirection="row" alignItems="center" gap="xs">
                 {dot}
+                {snap.resetsAt && sleepsThrough(snap.resetsAt) && <Text size="caption" color="#a5b4fc" wrap="truncate">{mode === 'narrow' ? '☾' : L('☾ sin freno (sueño)', '☾ no brake (sleep)')}</Text>}
                 <Text size="caption" dimColor wrap="truncate">{!snap.resetsAt ? (mode === 'wide' ? L('bloque nuevo · empieza con tu próximo mensaje', 'new block · starts with your next message') : L('bloque nuevo', 'new block')) : mode === 'wide' ? L(`se reinicia en ${left(snap.resetsAt, now)}`, `resets in ${left(snap.resetsAt, now)}`) : leftShort(snap.resetsAt, now)}</Text>
               </Box>
             )
