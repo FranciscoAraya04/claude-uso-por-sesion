@@ -45,6 +45,9 @@ const schedErr = atom({ plugin: 'uso-por-sesion', key: 'schedErr' } as const, ''
 const schedActive = atom({ plugin: 'uso-por-sesion', key: 'schedActive' } as const, '')
 const schedRev = atom({ plugin: 'uso-por-sesion', key: 'schedRev' } as const, 0)
 const SCHED_KEY = 'programados'
+// Lo que se va escribiendo en el cuadro: se guarda sin redibujar el panel (redibujar con cada tecla hacía
+// parpadear el cuadro y, al escribir rápido, el texto viejo pisaba al nuevo). Se aplica al guardar o al cambiar de opción.
+let schedTyped: { text?: string; time?: string } = {}
 // Color de lo programado: el mismo lavanda de la luna y de las sesiones ∞.
 const SCHED_COLOR = '#a5b4fc'
 
@@ -798,7 +801,7 @@ function schedLabel(i: Scheduled) {
 // Guarda el borrador del cuadro abierto: nuevo, editado o seguimiento de otro prompt.
 async function schedSubmit($: $T) {
   const ui = await read($, schedUi)
-  const d = await read($, schedDraft)
+  const d = { ...(await read($, schedDraft)), ...schedTyped }
   if (!ui) return
   const text = d.text.trim()
   if (!text) return void update($, schedErr, () => L('Escribe el prompt primero.', 'Write the prompt first.'))
@@ -824,6 +827,7 @@ async function schedSubmit($: $T) {
   await schedSave($, list)
   await update($, schedErr, () => '')
   await update($, schedUi, () => null)
+  schedTyped = {}
 }
 
 // Cancela un prompt; sus seguimientos no se pierden: suben un nivel y, si quedan arriba, heredan su hora.
@@ -839,6 +843,7 @@ async function schedOpen($: $T, ui: SchedUi) {
   const cur = await read($, schedUi)
   const same = cur && cur.mode === ui.mode && cur.sid === ui.sid && cur.id === ui.id
   await update($, schedErr, () => '')
+  schedTyped = {}
   if (same) return void update($, schedUi, () => null)
   const it = ui.id ? (await schedList($)).find(i => i.id === ui.id) : undefined
   await update($, schedDraft, () => (ui.mode === 'edit' && it ? { text: it.text, type: it.type, time: it.time ?? '07:30' } : { text: '', type: 'next', time: '07:30' }))
@@ -1364,22 +1369,22 @@ export const register: Register = on => {
         const follow = sUi.mode === 'follow' || (sUi.mode === 'edit' && !!sched.find(i => i.id === sUi.id)?.after)
         const nextAt = snapS?.resetsAt ? hhmm(new Date(Date.parse(snapS.resetsAt) + resumeMargin()).toISOString()) : L('ahora', 'now')
         const weekAt = snapS?.weeklyResetsAt ? dayHour(new Date(Date.parse(snapS.weeklyResetsAt) + resumeMargin()).toISOString()) : '—'
-        const pick = (type: SchedDraft['type']) => () => void update($, schedDraft, d => ({ ...d, type }))
+        const pick = (type: SchedDraft['type']) => () => void update($, schedDraft, d => ({ ...d, ...schedTyped, type }))
         return (
           <Box key={`sc-${sid}`} flexDirection="column" gap="xs" paddingLeft={depth * 2}>
             <Text size="caption" dimColor>{sUi.mode === 'edit' ? L('Editar prompt', 'Edit prompt') : follow ? L('Seguimiento: sale cuando Claude termine de responder el anterior', 'Follow-up: sent when Claude finishes answering the previous one') : L('Nuevo prompt programado', 'New scheduled prompt')}</Text>
-            {Input && <Input key={`si-${sid}`} rows={3} autoFocus placeholder={L('Revisa los resultados y arma el informe con las 3 figuras', 'Review the results and write the report with the 3 figures')} value={sDraft.text} onInput={v => void update($, schedDraft, d => ({ ...d, text: v }))} onSubmit={v => void update($, schedDraft, d => ({ ...d, text: v })).then(() => schedSubmit($))} submitLabel={L('programar', 'schedule')} />}
+            {Input && <Input key={`si-${sid}`} rows={3} autoFocus placeholder={L('Revisa los resultados y arma el informe con las 3 figuras', 'Review the results and write the report with the 3 figures')} value={sDraft.text} onInput={v => { schedTyped.text = v }} onSubmit={v => { schedTyped.text = v; void schedSubmit($) }} submitLabel="↵" />}
             {!follow && (
               <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap="sm">
                 <Button key={`st-next-${sid}`} label={L(`↻ Próximo bloque · ${nextAt}`, `↻ Next block · ${nextAt}`)} variant={sDraft.type === 'next' ? 'primary' : 'secondary'} onPress={pick('next')} />
                 <Button key={`st-week-${sid}`} label={L(`Semanal · ${weekAt}`, `Weekly · ${weekAt}`)} variant={sDraft.type === 'week' ? 'primary' : 'secondary'} onPress={pick('week')} />
                 <Button key={`st-time-${sid}`} label={L('Hora', 'Time')} variant={sDraft.type === 'time' ? 'primary' : 'secondary'} onPress={pick('time')} />
-                {sDraft.type === 'time' && Input && <Input key={`sh-${sid}`} placeholder="07:30" value={sDraft.time} onInput={v => void update($, schedDraft, d => ({ ...d, time: v }))} onSubmit={v => void update($, schedDraft, d => ({ ...d, time: v })).then(() => schedSubmit($))} />}
+                {sDraft.type === 'time' && Input && <Input key={`sh-${sid}`} placeholder="07:30" value={sDraft.time} onInput={v => { schedTyped.time = v }} onSubmit={v => { schedTyped.time = v; void schedSubmit($) }} />}
               </Box>
             )}
             <Box flexDirection="row" alignItems="center" gap="sm">
               <Box flexGrow={1} />
-              <Button key={`sx-${sid}`} label={L('Cancelar', 'Cancel')} onPress={() => void update($, schedUi, () => null)} />
+              <Button key={`sx-${sid}`} label={L('Cancelar', 'Cancel')} onPress={() => { schedTyped = {}; void update($, schedUi, () => null) }} />
               <Button key={`ss-${sid}`} label={sUi.mode === 'edit' ? L('Guardar', 'Save') : L('Programar', 'Schedule')} variant="primary" onPress={() => void schedSubmit($)} />
             </Box>
             {sErr && <Text size="caption" color="#ef4444">{sErr}</Text>}
@@ -1395,13 +1400,28 @@ export const register: Register = on => {
               sUi?.mode === 'edit' && sUi.id === item.id
                 ? composer(sid, depth)
                 : <Box key={`sw-${item.id}`} flexDirection="column" gap="xs">
-                    <Box flexDirection="row" alignItems="center" gap="sm" paddingLeft={depth * 2}>
-                      <Text size="caption" color={SCHED_COLOR}>{item.after ? '↳' : '⏱'} {schedLabel(item)}</Text>
-                      <Box flexGrow={1} flexShrink={1}><Text size="caption" wrap="truncate">{item.text}</Text></Box>
-                      <Button key={`pe-${item.id}`} label="✎" onPress={() => void schedOpen($, { mode: 'edit', sid, id: item.id })} />
-                      <Button key={`pf-${item.id}`} label="+" onPress={() => void schedOpen($, { mode: 'follow', sid, id: item.id })} />
-                      <Button key={`px-${item.id}`} label="✕" onPress={() => void schedDelete($, item.id)} />
-                    </Box>
+                    {(() => {
+                      const btns = [
+                        <Button key={`pe-${item.id}`} label="✎" onPress={() => void schedOpen($, { mode: 'edit', sid, id: item.id })} />,
+                        <Button key={`pf-${item.id}`} label="+" onPress={() => void schedOpen($, { mode: 'follow', sid, id: item.id })} />,
+                        <Button key={`px-${item.id}`} label="✕" onPress={() => void schedDelete($, item.id)} />,
+                      ]
+                      const label = <Text size="caption" color={SCHED_COLOR} wrap="truncate">{item.after ? '↳' : '⏱'} {schedLabel(item)}</Text>
+                      const text = <Text size="caption" wrap="truncate">{item.text}</Text>
+                      return (e.props.bodyColumns ?? 60) >= 90
+                        ? <Box flexDirection="row" alignItems="center" gap="sm" paddingLeft={depth * 2}>
+                            {label}
+                            <Box flexGrow={1} flexShrink={1}>{text}</Box>
+                            {btns}
+                          </Box>
+                        : <Box flexDirection="column" gap="xs" paddingLeft={depth * 2}>
+                            <Box flexDirection="row" alignItems="center" gap="sm">
+                              <Box flexGrow={1} flexShrink={1}>{label}</Box>
+                              {btns}
+                            </Box>
+                            {text}
+                          </Box>
+                    })()}
                     {sUi?.mode === 'follow' && sUi.id === item.id && composer(sid, depth + 1)}
                   </Box>
             ))}
