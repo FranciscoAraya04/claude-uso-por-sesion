@@ -23,7 +23,7 @@ test('tocar ∞ lo activa y la fila cambia', async ($, on) => {
   
   await ui.press({ key: 'up-yo' })
   expect(store.get('sinfreno:yo')).toBe(resetsAt)
-  expect(JSON.stringify(await ui.find({ type: 'Text', text: /Mía/ }))).toContain('#d97757')
+  expect(JSON.stringify(await ui.find({ type: 'Text', text: /Mía/ }))).toContain('#a5b4fc')
   expect(JSON.stringify(await ui.find({ type: 'Button', key: 'up-yo' }))).toContain('∞ activo')
   await ui.press({ key: 'dn-yo' })
   expect(store.has('sinfreno:yo')).toBe(false)

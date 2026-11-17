@@ -38,8 +38,8 @@ const armed = atom({ plugin: 'uso-por-sesion', key: 'armed' } as const, '')
 const stoppedBy = atom({ plugin: 'uso-por-sesion', key: 'stoppedBy' } as const, '')
 
 const FIVE_HOURS = 5 * 3600e3
-// Terracota de Claude para sesiones ∞ (el tema de la app no lo expone en la franja).
-const CLAY = '#d97757'
+// Color de las sesiones ∞: el mismo azul lavanda de la luna del horario de sueño (se lee como "modo superior", no como error).
+const CLAY = '#a5b4fc'
 // Freno: al 83 % del bloque se detiene todo; el 2 % restante alcanza para cerrar ordenado.
 // Ajustes de cada persona, guardados en el almacén compartido; estos son los valores por defecto.
 type Lang = 'en' | 'es'
@@ -1237,7 +1237,7 @@ export const register: Register = on => {
           <Text size="caption" weight="medium">{L('Colores del punto', 'Dot colors')}</Text>
           <Text size="caption" dimColor>{L('Verde holgado · amarillo justo · naranjo te pasas por menos de 1 h · rojo 1–2 h · morado 2–3 h · morado oscuro más. Desde rojo parpadea.', 'Green plenty of room · yellow tight · orange you run out less than 1 h early · red 1–2 h · purple 2–3 h · dark purple more. Blinks from red up.')}</Text>
           <Text size="caption" weight="medium">{L('Desglose', 'Breakdown')}</Text>
-          <Text size="caption" dimColor>{L(`− / + cambian el tope de la sesión de a ${CFG.capStep} %; ⏸ / ▶ la pausan o reanudan; ∞ la deja sin freno global (nombre en color de Claude); la raya clara en la barra marca su tope.`, `− / + change the session's cap by ${CFG.capStep} %; ⏸ / ▶ pause or resume it; ∞ exempts it from the global brake (name in Claude's color); the light mark on the bar shows its cap.`)}</Text>
+          <Text size="caption" dimColor>{L(`− / + cambian el tope de la sesión de a ${CFG.capStep} %; ⏸ / ▶ la pausan o reanudan; ∞ la deja sin freno global (nombre en azul lavanda); la raya clara en la barra marca su tope.`, `− / + change the session's cap by ${CFG.capStep} %; ⏸ / ▶ pause or resume it; ∞ exempts it from the global brake (name in lavender blue); the light mark on the bar shows its cap.`)}</Text>
           <Text size="caption" dimColor>{L('Se entrega tal cual, sin garantías; el freno y los topes pueden cortar tareas a la mitad. Ver "Disclaimer" en el README.', 'Provided as is, without warranty; the brake and caps can stop tasks midway. See "Disclaimer" in the README.')}</Text>
         </Box>
       )

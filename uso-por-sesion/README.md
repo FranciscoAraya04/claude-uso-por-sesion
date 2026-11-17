@@ -94,7 +94,7 @@ En **⚙ Configuración → Ajustes** cada persona ajusta con − / +:
 
 ## Freno y reanudación
 
-- **Sesión ∞:** su nombre aparece en el color de Claude con ∞ en el desglose y en su propia franja. Ignora el freno global hasta el próximo reinicio, respeta su propio tope y se detiene sola en 100 % − margen de cierre, para no llegar al corte de Anthropic. Las demás, al frenarse, avisan qué sesión sigue sin freno.
+- **Sesión ∞:** su nombre aparece en azul lavanda (el color de la luna) con ∞ en el desglose y en su propia franja. Ignora el freno global hasta el próximo reinicio, respeta su propio tope y se detiene sola en 100 % − margen de cierre, para no llegar al corte de Anthropic. Las demás, al frenarse, avisan qué sesión sigue sin freno.
 - **Topes:** el cierre empieza en *tope − margen de cierre*, así la sesión termina cerca de su tope sin pasarse.
 
 - Al 83 % del bloque (ajustable) (o al tope de una sesión), las herramientas se bloquean y Claude cierra con un resumen corto de dónde quedó. El 2 % restante alcanza para ese cierre.
