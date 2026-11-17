@@ -58,10 +58,15 @@ for (const proj of safeList(root)) {
 }
 
 const next = {}
+const stale = {}
 for (const { file, sid, sdir, main } of files) {
   let st
   try { st = fs.statSync(file) } catch { continue }
-  if (st.mtimeMs < keepFrom) continue
+  // Registro sin cambios en el periodo (sesión abierta pero quieta): no se lee, solo se toma su título renombrado.
+  if (st.mtimeMs < keepFrom) {
+    if (main) try { stale[sid] = JSON.parse(fs.readFileSync(path.join(sdir, 'custom-title.json'), 'utf8')).customTitle } catch {}
+    continue
+  }
   const head = readHead(file)
   const old = cache[file]
   // Un archivo más corto o con otro comienzo se reescribió: se lee de nuevo desde cero.
@@ -107,6 +112,7 @@ const sessions = all.filter(s => s.w > 0).sort((a, b) => b.w - a.w).map(({ id, t
 const weekly = all.filter(s => s.ww > 0).sort((a, b) => b.ww - a.ww).map(({ id, title, ww }) => ({ id, title, ww }))
 // Título de toda sesión con registro reciente, aunque no haya gastado nada en el periodo.
 const titles = {}
+for (const [id, t] of Object.entries(stale)) if (t) titles[id] = t
 for (const s of all) if (s.title) titles[s.id] = s.title
 const usd = { block: all.reduce((a, s) => a + s.w, 0), week: all.reduce((a, s) => a + s.ww, 0) }
 process.stdout.write(JSON.stringify({ sessions, weekly, titles, usd }))
