@@ -281,3 +281,41 @@ test('el gráfico semanal permite ver una semana anterior', async ($, on) => {
   expect(await pane.find({ type: 'Text', text: /terminó en 40 %/ })).toBeTruthy()
   await pane.unmount()
 })
+
+test('/uso-continuar todas no desactiva el tope semanal de quien no estaba frenada por él', async ($, on) => {
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }], ['tope-sem:otra', 90]])
+  setupWeek(on, store, { sessions: [{ id: 'yo', title: 'Mía', w: 1 }, { id: 'otra', title: 'Otra', w: 1 }], weekly: [{ id: 'yo', title: 'Mía', ww: 1 }, { id: 'otra', title: 'Otra', ww: 1 }], titles: {} })
+  await $.command.run({ command: 'uso-limite', args: '90' })
+  await $.command.run({ command: 'uso-continuar', args: 'todas' })
+  expect(store.has('tope-sem-ok:otra')).toBe(false)
+})
+
+test('pausada y sobre su tope semanal: un solo Reanudar libera ambas cosas', async ($, on) => {
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }], ['pausa:otra', true], ['tope-sem:otra', 20]])
+  setupWeek(on, store, { sessions: [{ id: 'yo', title: 'Mía', w: 1 }, { id: 'otra', title: 'Otra', w: 1 }], weekly: [{ id: 'otra', title: 'Otra', ww: 9 }, { id: 'yo', title: 'Mía', ww: 1 }], titles: {} })
+  await $.command.run({ command: 'uso-limite', args: '90' })
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'toggle' })
+  expect(await ui.find({ type: 'Text', text: /Pausada por ti/ })).toBeTruthy()
+  await ui.press({ key: 'p-otra' })
+  expect(store.has('pausa:otra')).toBe(false)
+  expect(store.has('tope-sem-ok:otra')).toBe(true)
+  await ui.unmount()
+})
+
+test('"Pausar todas" llega también a la 9.ª sesión en adelante', async ($, on) => {
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }]])
+  const many = Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, title: `S${i}`, w: 10 - i }))
+  setup(on, store, 30, [...many, { id: 'yo', title: 'Mía', w: 0.5 }])
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  await $.command.run({ command: 'uso-limite', args: '90' })
+  await $.command.run({ command: 'uso-config', args: '' })
+  const pane = await $.ui.mount({
+    plugin: 'uso-por-sesion', component: 'Pane', requestId: 'uso-config', surface: 'desktop',
+    props: { title: 'Uso por sesión', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
+  })
+  await pane.press({ key: 'tab-sesiones' })
+  await pane.press({ key: 'pause-all' })
+  expect(store.get('pausa:s9')).toBe(true)
+  await pane.unmount()
+})

@@ -92,6 +92,8 @@ const RESUME_TEXT = (): Record<string, string> => ({
     'The 5-hour block has reset (uso-por-sesion brake). Continue the task exactly where you left off.'),
   tope: L('El bloque de 5 horas se restableció o se liberó el tope de esta sesión (uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
     "The 5-hour block has reset or this session's cap was released (uso-por-sesion). Continue the task exactly where you left off."),
+  limite: L('El bloque de 5 horas se restableció (uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
+    'The 5-hour block has reset (uso-por-sesion). Continue the task exactly where you left off.'),
   semanal: L('Se reinició el límite semanal o se liberó el tope semanal de esta sesión (uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
     "The weekly limit has reset or this session's weekly cap was released (uso-por-sesion). Continue the task exactly where you left off."),
   pausa: L('Esta sesión fue reanudada (uso-por-sesion). Continúa la tarea exactamente donde la dejaste.',
@@ -277,11 +279,12 @@ function historyChart(list: Bucket[], width: number, showBrake: boolean) {
   const step = (width - left - 8) / list.length
   const bw = Math.max(4, Math.min(28, step * 0.7))
   const y = (pct: number) => top + plot - (Math.min(max, pct) / max) * plot
-  let out = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${ht}" viewBox="0 0 ${width} ${ht}" font-family="sans-serif" font-size="10">`
+  let out = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${ht}" viewBox="0 0 ${width} ${ht}" font-family="sans-serif" font-size="10">` + '<style>.g{stroke:#3a3936}.m{fill:#8f8d85}.l{fill:#c8c6bd}.dv{stroke:#55534e}@media (prefers-color-scheme: light){.g{stroke:#e4e2db}.m{fill:#6b6963}.l{fill:#3d3c38}.dv{stroke:#b4b2a9}}</style>'
   for (const g of [0, max / 2, max]) {
-    out += `<line x1="${left}" x2="${width - 4}" y1="${y(g)}" y2="${y(g)}" stroke="#3a3936" stroke-width="1"/><text x="${left - 4}" y="${y(g) + 3}" fill="#8f8d85" text-anchor="end">${Math.round(g)}</text>`
+    out += `<line x1="${left}" x2="${width - 4}" y1="${y(g)}" y2="${y(g)}" class="g" stroke-width="1"/><text x="${left - 4}" y="${y(g) + 3}" class="m" text-anchor="end">${Math.round(g)}</text>`
   }
   const legend = new Map<string, string>()
+  let lastDayX = -1e9
   list.forEach((b, i) => {
     const x = left + i * step + (step - bw) / 2
     let acc = 0
@@ -303,25 +306,27 @@ function historyChart(list: Bucket[], width: number, showBrake: boolean) {
     const cx = (x + bw / 2).toFixed(1)
     // Con pocas barras, el valor va escrito encima (el desktop no muestra tooltips).
     if (list.length <= 16 && b.total > 0) {
-      out += `<text x="${cx}" y="${(y(b.total) - 3).toFixed(1)}" fill="#c8c6bd" text-anchor="middle" font-size="9">${fmt(b.total)}</text>`
+      out += `<text x="${cx}" y="${(y(b.total) - 3).toFixed(1)}" class="l" text-anchor="middle" font-size="9">${fmt(b.total)}</text>`
     }
     if (b.day !== undefined) {
       // Barras por ventana de 5 h: separador y nombre del día donde empieza uno nuevo.
       if (b.day !== list[i - 1]?.day) {
+        const room = left + i * step - lastDayX >= 44
+        if (room) lastDayX = left + i * step
         const sx = (left + i * step).toFixed(1)
-        if (i > 0) out += `<line x1="${sx}" x2="${sx}" y1="${top}" y2="${ht - bottom + 16}" stroke="#55534e" stroke-width="1" stroke-dasharray="2 3"/>`
-        out += `<text x="${(+sx + 3).toFixed(1)}" y="${ht - bottom + 26}" fill="#c8c6bd">${esc(b.day)}</text>`
+        if (i > 0) out += `<line x1="${sx}" x2="${sx}" y1="${top}" y2="${ht - bottom + 16}" class="dv" stroke-width="1" stroke-dasharray="2 3"/>`
+        if (room) out += `<text x="${(+sx + 3).toFixed(1)}" y="${ht - bottom + 26}" class="l">${esc(b.day)}</text>`
       }
-      if (list.length <= 24) out += `<text x="${cx}" y="${ht - bottom + 12}" fill="#8f8d85" text-anchor="middle" font-size="9">${esc(b.label)}</text>`
+      if (list.length <= 24) out += `<text x="${cx}" y="${ht - bottom + 12}" class="m" text-anchor="middle" font-size="9">${esc(b.label)}</text>`
     } else if (i % Math.ceil(list.length / 8) === 0) {
-      out += `<text x="${cx}" y="${ht - bottom + 14}" fill="#8f8d85" text-anchor="middle">${esc(b.label)}</text>`
+      out += `<text x="${cx}" y="${ht - bottom + 14}" class="m" text-anchor="middle">${esc(b.label)}</text>`
     }
   })
   if (showBrake) out += `<line x1="${left}" x2="${width - 4}" y1="${y(CFG.brakeAt)}" y2="${y(CFG.brakeAt)}" stroke="#ef4444" stroke-width="1" stroke-dasharray="4 3"/>`
   let lx = left
   for (const [title, c] of [...legend].slice(0, 4)) {
     const label = title.length > 22 ? `${title.slice(0, 21)}…` : title
-    out += `<rect x="${lx}" y="${ht - 10}" width="8" height="8" rx="2" fill="${c}"/><text x="${lx + 11}" y="${ht - 3}" fill="#c8c6bd">${esc(label)}</text>`
+    out += `<rect x="${lx}" y="${ht - 10}" width="8" height="8" rx="2" fill="${c}"/><text x="${lx + 11}" y="${ht - 3}" class="l">${esc(label)}</text>`
     lx += 14 + label.length * 5.6
     if (lx > width - 60) break
   }
@@ -341,20 +346,20 @@ function weeklyChart(list: HistoryBlock[], width: number, endIso: string, now: n
     .map(b => ({ t: Math.min(now, Date.parse(b.resetsAt)), v: b.weekly! }))
   if (current !== null) pts.push({ t: now, v: current })
   pts.sort((a, b) => a.t - b.t)
-  let out = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${ht}" viewBox="0 0 ${width} ${ht}" font-family="sans-serif" font-size="10">`
+  let out = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${ht}" viewBox="0 0 ${width} ${ht}" font-family="sans-serif" font-size="10">` + '<style>.g{stroke:#3a3936}.m{fill:#8f8d85}.l{fill:#c8c6bd}.dv{stroke:#55534e}@media (prefers-color-scheme: light){.g{stroke:#e4e2db}.m{fill:#6b6963}.l{fill:#3d3c38}.dv{stroke:#b4b2a9}}</style>'
   for (const g of [0, 50, 100]) {
-    out += `<line x1="${left}" x2="${width - right}" y1="${y(g)}" y2="${y(g)}" stroke="#3a3936" stroke-width="1"/><text x="${left - 4}" y="${y(g) + 3}" fill="#8f8d85" text-anchor="end">${g}</text>`
+    out += `<line x1="${left}" x2="${width - right}" y1="${y(g)}" y2="${y(g)}" class="g" stroke-width="1"/><text x="${left - 4}" y="${y(g) + 3}" class="m" text-anchor="end">${g}</text>`
   }
   // Medianoches dentro del periodo: separador y nombre del día que empieza.
   const d = new Date(start)
   d.setHours(24, 0, 0, 0)
   // El día en que empieza la semana solo se rotula si cabe antes de la primera medianoche
   // (con reinicio a media tarde, ese tramo es angosto y los nombres se encimarían).
-  if (x(d.getTime()) - left >= 44) out += `<text x="${left + 2}" y="${ht - 6}" fill="#c8c6bd">${esc(dayName(new Date(start).toISOString()))}</text>`
+  if (x(d.getTime()) - left >= 44) out += `<text x="${left + 2}" y="${ht - 6}" class="l">${esc(dayName(new Date(start).toISOString()))}</text>`
   for (; d.getTime() < end; d.setDate(d.getDate() + 1)) {
     const sx = x(d.getTime()).toFixed(1)
-    out += `<line x1="${sx}" x2="${sx}" y1="${top}" y2="${ht - bottom + 4}" stroke="#55534e" stroke-width="1" stroke-dasharray="2 3"/>`
-    if (x(d.getTime()) < width - right - 24) out += `<text x="${(+sx + 3).toFixed(1)}" y="${ht - 6}" fill="#c8c6bd">${esc(dayName(d.toISOString()))}</text>`
+    out += `<line x1="${sx}" x2="${sx}" y1="${top}" y2="${ht - bottom + 4}" class="dv" stroke-width="1" stroke-dasharray="2 3"/>`
+    if (x(d.getTime()) < width - right - 24) out += `<text x="${(+sx + 3).toFixed(1)}" y="${ht - 6}" class="l">${esc(dayName(d.toISOString()))}</text>`
   }
   const nx = x(now).toFixed(1)
   if (!past) out += `<line x1="${nx}" x2="${nx}" y1="${top}" y2="${ht - bottom}" stroke="#8f8d85" stroke-width="1"/>`
@@ -368,14 +373,14 @@ function weeklyChart(list: HistoryBlock[], width: number, endIso: string, now: n
     const tEnd = Math.min(end, t100)
     out += `<line x1="${x(last.t).toFixed(1)}" y1="${y(last.v).toFixed(1)}" x2="${x(tEnd).toFixed(1)}" y2="${y(rate * (tEnd - start)).toFixed(1)}" stroke="#a855f7" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.8"/>`
     if (hit !== null) out += `<circle cx="${x(hit).toFixed(1)}" cy="${y(100).toFixed(1)}" r="4" fill="none" stroke="#ef4444" stroke-width="2"/>`
-    else out += `<text x="${width - right - 2}" y="${(y(rate * (end - start)) - 5).toFixed(1)}" fill="#c8c6bd" text-anchor="end" font-size="9">${fmt(rate * (end - start))} %</text>`
+    else out += `<text x="${width - right - 2}" y="${(y(rate * (end - start)) - 5).toFixed(1)}" class="l" text-anchor="end" font-size="9">${fmt(rate * (end - start))} %</text>`
   }
   if (pts.length) {
     const path = [{ t: start, v: 0 }, ...pts].map((p, k) => `${k ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')
     out += `<path d="${path} L${x(last!.t).toFixed(1)},${y(0)} Z" fill="#a855f7" opacity="0.15"/>`
     out += `<path d="${path}" fill="none" stroke="#a855f7" stroke-width="2"/>`
     for (const p of pts) out += `<circle cx="${x(p.t).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="2.5" fill="#a855f7"/>`
-    if (past) out += `<text x="${(x(last!.t) + 4).toFixed(1)}" y="${(y(last!.v) - 5).toFixed(1)}" fill="#c8c6bd" font-size="9">${fmt(last!.v)} %</text>`
+    if (past) out += `<text x="${(x(last!.t) + 4).toFixed(1)}" y="${(y(last!.v) - 5).toFixed(1)}" class="l" font-size="9">${fmt(last!.v)} %</text>`
   }
   return { svg: out + '</svg>', hit, final: last?.v ?? null }
 }
@@ -436,14 +441,22 @@ async function refresh($: $T) {
   const now = await $.clock.now()
   if (five.resetsAt && Date.parse(five.resetsAt) <= now) {
     const prev = await read($, snapshot)
+    // Bloque nuevo: los frenos de 5 h ya no aplican; las pausas y los topes semanales se leen de nuevo.
+    const rows = await Promise.all((prev?.sessions ?? []).map(async s => {
+      const { stop, until, ...rest } = s
+      const paused = !!(await $.store.get(pauseKey(s.id)))
+      const keep = stop === 'semanal' ? { stop, until } : {}
+      return { ...rest, pct: 0, bypass: false, paused, ...(paused ? { stop: 'pausa' as const } : keep) }
+    }))
     await update($, snapshot, () => ({
       fiveHour: 0,
       resetsAt: null,
       weekly: week?.percentUsed ?? prev?.weekly ?? null,
       weeklyResetsAt: week?.resetsAt ?? prev?.weeklyResetsAt ?? null,
       current: 0,
-      sessions: (prev?.sessions ?? []).map(s => ({ ...s, pct: 0, bypass: false })),
+      sessions: rows,
     }))
+    await syncStop($)
     return
   }
   const since = five.resetsAt ? Date.parse(five.resetsAt) - FIVE_HOURS : now - FIVE_HOURS
@@ -456,7 +469,12 @@ async function refresh($: $T) {
     await update($, status, () => L(`Error al leer registros: ${stderr.slice(0, 120)}`, `Error reading logs: ${stderr.slice(0, 120)}`))
     return
   }
-  const scan = JSON.parse(stdout) as { sessions: { id: string; title: string | null; w: number }[]; weekly?: { id: string; title: string | null; ww: number }[]; titles?: Record<string, string>; usd?: { block: number; week: number } }
+  let parsed: unknown
+  try { parsed = JSON.parse(stdout) } catch {
+    await update($, status, () => L('Error al leer registros: salida incompleta.', 'Error reading logs: incomplete output.'))
+    return
+  }
+  const scan = parsed as { sessions: { id: string; title: string | null; w: number }[]; weekly?: { id: string; title: string | null; ww: number }[]; titles?: Record<string, string>; usd?: { block: number; week: number } }
   const { sessions } = scan
   const titles = scan.titles ?? {}
   const total = sessions.reduce((s, x) => s + x.w, 0) || 1
@@ -488,27 +506,34 @@ async function refresh($: $T) {
     shares.push({ id, title: titles[id] ?? (v.folder ? L(`Sesión en ${v.folder}`, `Session in ${v.folder}`) : L('Sesión sin uso aún', 'Session with no usage yet')), pct: 0, ...(await extra(id)) })
   }
   // Por qué está detenida cada sesión (mismas reglas que stopReason) y desde cuándo se reanuda sola.
-  const wUntil = week?.resetsAt ? new Date(Date.parse(week.resetsAt) + resumeMargin()).toISOString() : undefined
+  const wUntil = week?.resetsAt && Date.parse(week.resetsAt) > now ? new Date(Date.parse(week.resetsAt) + resumeMargin()).toISOString() : undefined
   const weekStop = async (sh: { id: string; wpct?: number; wcap?: number }) =>
     !!wUntil && (sh.wcap ?? 100) < 100 && (sh.wpct ?? 0) >= Math.max(0, (sh.wcap ?? 100) - CFG.closeMargin) &&
     !sameWeek(await $.store.get(wcapOkKey(sh.id)), week?.resetsAt)
-  for (const sh of shares) if (!sh.paused && (await weekStop(sh))) Object.assign(sh, { stop: 'semanal', until: wUntil })
+  for (const sh of shares) {
+    if (!(await weekStop(sh))) continue
+    // Pausada y además sobre su tope semanal: se muestra la pausa, pero Reanudar también libera el tope.
+    Object.assign(sh, sh.paused ? { wstop: true } : { stop: 'semanal', until: wUntil, wstop: true })
+  }
+  // La pausa se marca siempre, haya o no datos del bloque.
+  for (const sh of shares) if (sh.paused && !(sh as { stop?: string }).stop) Object.assign(sh, { stop: 'pausa' })
   if (five.resetsAt) {
     const until = new Date(Date.parse(five.resetsAt) + resumeMargin()).toISOString()
     const approved = sameBlock(await $.store.get(APPROVED_KEY), five.resetsAt)
     const night = sleepsThrough(five.resetsAt)
     for (const sh of shares) {
-      if ((sh as { stop?: string }).stop === 'semanal') continue
+      if ((sh as { stop?: string }).stop) continue
       const ok = (k: string) => $.store.get(k).then(v => sameBlock(v, five.resetsAt))
-      let stop: 'pausa' | 'tope' | 'freno' | undefined
-      if (sh.paused) stop = 'pausa'
-      else if (sh.bypass || night ? five.percentUsed >= 100 - CFG.closeMargin : five.percentUsed >= CFG.brakeAt && !approved && !(await ok(brakeOkKey(sh.id)))) stop = 'freno'
+      let stop: 'pausa' | 'tope' | 'freno' | 'limite' | undefined
+      // Con ∞ o en horario de sueño solo frena el límite real (100 % − margen de cierre).
+      if (sh.bypass || night) { if (five.percentUsed >= 100 - CFG.closeMargin) stop = 'limite' }
+      else if (five.percentUsed >= CFG.brakeAt && !approved && !(await ok(brakeOkKey(sh.id)))) stop = 'freno'
       else if (!night && sh.cap !== undefined && sh.pct >= Math.max(0, sh.cap - CFG.closeMargin) && !(await ok(capOkKey(sh.id)))) stop = 'tope'
-      if (stop) Object.assign(sh, { stop, ...(stop === 'pausa' ? {} : { until }) })
+      if (stop) Object.assign(sh, { stop, until })
     }
   }
-  // Se guardan 8; si esta sesión no entra, ocupa el último lugar.
-  const kept = shares.slice(0, 8)
+  // Se guardan todas (hasta 40, de más a menos uso); la franja muestra las que caben.
+  const kept = shares.slice(0, 40)
   if (!kept.some(s => s.id === me)) kept[kept.length - 1] = shares.find(s => s.id === me)!
   const next: Snapshot = {
     fiveHour: five.percentUsed,
@@ -577,6 +602,7 @@ async function patchRow($: $T, id: string, fn: (s: Snapshot['sessions'][number])
 }
 
 async function stepCap($: $T, id: string, dir: 1 | -1) {
+  await loadCfg($)
   const cur = await capOf($, id)
   const base = cur ?? 100
   const n = base + dir * CFG.capStep
@@ -592,10 +618,15 @@ async function stepCap($: $T, id: string, dir: 1 | -1) {
 }
 
 async function stepWeekCap($: $T, id: string, dir: 1 | -1) {
+  await loadCfg($)
   const next = Math.max(CFG.capStep >= 100 ? 1 : CFG.capStep, Math.min(100, (await wcapOf($, id)) + dir * CFG.capStep))
   await $.store.set(wcapKey(id), next)
   await $.store.delete(wcapOkKey(id))
-  await update($, snapshot, snap => (snap ? { ...snap, week: snap.week?.map(s => (s.id === id ? { ...s, wcap: next } : s)) } : snap))
+  await update($, snapshot, snap => (snap ? {
+    ...snap,
+    week: snap.week?.map(s => (s.id === id ? { ...s, wcap: next } : s)),
+    sessions: snap.sessions.map(s => (s.id === id ? { ...s, wcap: next } : s)),
+  } : snap))
   void refresh($).catch(() => {})
   await syncStop($)
 }
@@ -607,14 +638,15 @@ async function loadWeekCost($: $T, endIso: string) {
   if (typeof all[endIso] !== 'number') {
     const end = Date.parse(endIso)
     const r = await $.process.run(['node', `${$.plugin.root}/hooks/scan.js`, 'cost', String(end - SEVEN_DAYS), String(end)], { timeoutMs: 120000 })
-    if (r.exitCode !== 0) return
-    all[endIso] = (JSON.parse(r.stdout) as { usd: number }).usd
+    let v = -1
+    try { if (r.exitCode === 0) v = Number((JSON.parse(r.stdout) as { usd: number }).usd) } catch {}
+    all[endIso] = Number.isFinite(v) ? v : -1
     await $.store.set(WEEK_COSTS_KEY, all)
   }
   await update($, weekCosts, () => ({ ...all }))
 }
 
-const usd = (n: number) => `US$ ${n >= 100 ? Math.round(n).toLocaleString(CFG.lang === 'en' ? 'en-US' : 'es-CL') : fmt(n)}`
+const usd = (n: number) => `US$ ${n >= 100 ? Math.round(n).toLocaleString(CFG.lang === 'en' ? 'en-US' : 'es-CL') : (CFG.lang === 'en' ? n.toFixed(2) : n.toFixed(2).replace('.', ','))}`
 
 // Horario de sueño (horas locales; se apaga con su interruptor o con inicio = fin). Si el bloque de 5 h se reinicia dentro de él,
 // el freno global y los topes de 5 h por sesión no aplican: la reserva no se usaría mientras duermes.
@@ -653,7 +685,7 @@ async function stopReason($: $T): Promise<{ kind: string; text: string; until?: 
   const snapNow = await read($, snapshot)
   const wrow = snapNow?.sessions.find(s => s.id === me)
   const wreset = snapNow?.weeklyResetsAt
-  if (wreset && Date.parse(wreset) > Date.now() && wrow && (wrow.wcap ?? 100) < 100 && (wrow.wpct ?? 0) >= Math.max(0, (wrow.wcap ?? 100) - CFG.closeMargin) &&
+  if (wreset && Date.parse(wreset) + resumeMargin() > Date.now() && wrow && (wrow.wcap ?? 100) < 100 && (wrow.wpct ?? 0) >= Math.max(0, (wrow.wcap ?? 100) - CFG.closeMargin) &&
     !sameWeek(await $.store.get(wcapOkKey(me)), wreset)) {
     const until = Date.parse(wreset) + resumeMargin()
     const at = dayHour(new Date(until).toISOString())
@@ -666,11 +698,11 @@ async function stopReason($: $T): Promise<{ kind: string; text: string; until?: 
   const bypass = sameBlock(await $.store.get(bypassKey(me)), l.resetsAt)
   const night = sleepsThrough(l.resetsAt)
   if (night && !bypass && l.pct >= 100 - CFG.closeMargin) {
-    return { kind: 'freno', text: L(`Límite real cerca: el bloque de 5 h va en ${fmt(l.pct)} % (horario de sueño: sin freno global ni topes de 5 h). La sesión se detiene antes del corte de Anthropic y se reanuda sola a las ${resumeAt}.`,
+    return { kind: 'limite', text: L(`Límite real cerca: el bloque de 5 h va en ${fmt(l.pct)} % (horario de sueño: sin freno global ni topes de 5 h). La sesión se detiene antes del corte de Anthropic y se reanuda sola a las ${resumeAt}.`,
       `Real limit close: the 5-hour block is at ${fmt(l.pct)} % (sleep hours: no global brake or 5-hour caps). The session stops before Anthropic's cutoff and resumes on its own at ${resumeAt}.`) }
   }
   if (bypass && l.pct >= 100 - CFG.closeMargin) {
-    return { kind: 'freno', text: L(`Límite real cerca: el bloque de 5 h va en ${fmt(l.pct)} % y esta sesión (sin freno global) se detiene antes del corte de Anthropic. Se reanuda sola a las ${resumeAt}.`,
+    return { kind: 'limite', text: L(`Límite real cerca: el bloque de 5 h va en ${fmt(l.pct)} % y esta sesión (sin freno global) se detiene antes del corte de Anthropic. Se reanuda sola a las ${resumeAt}.`,
       `Real limit close: the 5-hour block is at ${fmt(l.pct)} % and this session (no global brake) stops before Anthropic's cutoff. It resumes on its own at ${resumeAt}.`) }
   }
   const brakeOk = bypass || sameBlock(await $.store.get(APPROVED_KEY), l.resetsAt) || sameBlock(await $.store.get(brakeOkKey(me)), l.resetsAt)
@@ -723,21 +755,16 @@ async function setPaused($: $T, id: string, paused: boolean) {
 // Reanuda una sesión detenida desde su botón: quita la pausa o la libera del freno y del tope hasta el reinicio.
 async function releaseSession($: $T, id: string) {
   const snap = await read($, snapshot)
-  const row = snap?.sessions.find(s => s.id === id)
-  if (row?.stop === 'pausa') return setPaused($, id, false)
-  if (!snap?.resetsAt && row?.stop === 'semanal' && snap?.weeklyResetsAt) {
-    await $.store.set(wcapOkKey(id), snap.weeklyResetsAt)
-    void refresh($).catch(() => {})
-    await maybeResume($)
-    return void (await syncStop($))
+  const row = snap?.sessions.find(s => s.id === id) ?? snap?.week?.find(s => s.id === id)
+  await $.store.delete(pauseKey(id))
+  if ((row?.wstop || row?.stop === 'semanal') && snap?.weeklyResetsAt) await $.store.set(wcapOkKey(id), snap.weeklyResetsAt)
+  if (row?.stop && row.stop !== 'pausa' && row.stop !== 'semanal' && snap?.resetsAt) {
+    await $.store.set(brakeOkKey(id), snap.resetsAt)
+    await $.store.set(capOkKey(id), snap.resetsAt)
   }
-  if (!snap?.resetsAt) return setPaused($, id, false)
-  if (row?.stop === 'semanal' && snap.weeklyResetsAt) await $.store.set(wcapOkKey(id), snap.weeklyResetsAt)
-  await $.store.set(brakeOkKey(id), snap.resetsAt)
-  await $.store.set(capOkKey(id), snap.resetsAt)
   await patchRow($, id, s => {
-    const { stop: _s, until: _u, ...rest } = s
-    return rest
+    const { stop: _s, until: _u, wstop: _w, ...rest } = s
+    return { ...rest, paused: false }
   })
   void refresh($).catch(() => {})
   await maybeResume($)
@@ -756,12 +783,12 @@ async function setAll($: $T, paused: boolean) {
         await $.store.set(brakeOkKey(s.id), snap.resetsAt)
         await $.store.set(capOkKey(s.id), snap.resetsAt)
       }
-      if (snap?.weeklyResetsAt) await $.store.set(wcapOkKey(s.id), snap.weeklyResetsAt)
+      if ((s.wstop || s.stop === 'semanal') && snap?.weeklyResetsAt) await $.store.set(wcapOkKey(s.id), snap.weeklyResetsAt)
     }
   }
   if (!paused && snap?.resetsAt) await $.store.set(APPROVED_KEY, snap.resetsAt)
   await update($, snapshot, sn => (sn ? { ...sn, sessions: sn.sessions.map(s => {
-    const { stop: _s, until: _u, ...rest } = s
+    const { stop: _s, until: _u, wstop: _w, ...rest } = s
     return paused ? { ...rest, paused: true, stop: 'pausa' as const } : { ...rest, paused: false }
   }) } : sn))
   void refresh($).catch(() => {})
@@ -771,6 +798,7 @@ async function setAll($: $T, paused: boolean) {
 
 // Activa o quita el ∞ (sin freno global) de una sesión: hasta CFG.maxBypass a la vez, con un segundo toque para confirmar.
 async function toggleBypass($: $T, id: string) {
+  await loadCfg($)
   // Usa el reinicio del snapshot: desde un botón, leer el uso de la sesión puede no estar permitido.
   const snap = await read($, snapshot)
   const t = await activeTest($)
@@ -824,11 +852,14 @@ const cmdUsoContinuar: Hook<'command.run'> = async ($, e) => {
   const list = await targets($, e.args)
   if (!list.length) return { text: notFound() }
   if (isAll) await $.store.set(APPROVED_KEY, l.resetsAt)
-  const wr = (await read($, snapshot))?.weeklyResetsAt
+  const cur = await read($, snapshot)
+  const wr = cur?.weeklyResetsAt
   for (const t of list) {
     await $.store.set(brakeOkKey(t.id), l.resetsAt)
     await $.store.set(capOkKey(t.id), l.resetsAt)
-    if (wr) await $.store.set(wcapOkKey(t.id), wr)
+    // El tope semanal se libera solo si es lo que la tiene detenida (si no, seguiría desactivado toda la semana).
+    const row = cur?.sessions.find(s => s.id === t.id)
+    if (wr && (row?.wstop || row?.stop === 'semanal')) await $.store.set(wcapOkKey(t.id), wr)
   }
   await maybeResume($)
   await syncStop($)
@@ -867,6 +898,7 @@ const cmdUsoLimite: Hook<'command.run'> = async ($, e) => {
   if (a === 'quitar' || a === 'remove' || a === 'off') {
     await $.store.set(capKey(me), 0)
     await refresh($).catch(() => {})
+    await syncStop($)
     return { text: L('Tope de esta sesión quitado.', "This session's cap removed.") }
   }
   const n = Number(a)
@@ -874,6 +906,7 @@ const cmdUsoLimite: Hook<'command.run'> = async ($, e) => {
   await $.store.set(capKey(me), n)
   await $.store.delete(capOkKey(me))
   await refresh($).catch(() => {})
+  await syncStop($)
   return { text: L(`Tope de esta sesión: ${fmt(n)} % del bloque de 5 h.`, `This session's cap: ${fmt(n)} % of the 5-hour block.`) }
 }
 
@@ -944,6 +977,7 @@ function stopLabel(s: { stop?: string; until?: string }): { text: string; color:
   if (s.stop === 'semanal') return { text: L(`Frenada: llegó a su tope semanal · reanuda sola el ${s.until ? dayHour(s.until) : ''}`, `Braked: reached its weekly cap · resumes on its own on ${s.until ? dayHour(s.until) : ''}`), color: '#ef4444' }
   if (s.stop === 'pausa') return { text: L('Pausada por ti', 'Paused by you'), color: '#facc15' }
   if (s.stop === 'tope') return { text: L(`Frenada: llegó a su tope de 5 h · reanuda sola a las ${at}`, `Braked: reached its 5-hour cap · resumes on its own at ${at}`), color: '#ef4444' }
+  if (s.stop === 'limite') return { text: L(`Frenada: el bloque de 5 h llegó al ${100 - CFG.closeMargin} %, cerca del límite real · reanuda sola a las ${at}`, `Braked: the 5-hour block reached ${100 - CFG.closeMargin} %, close to the real limit · resumes on its own at ${at}`), color: '#ef4444' }
   if (s.stop === 'freno') return { text: L(`Frenada: el bloque de 5 h llegó al ${CFG.brakeAt} % · reanuda sola a las ${at}`, `Braked: the 5-hour block reached ${CFG.brakeAt} % · resumes on its own at ${at}`), color: '#ef4444' }
   return null
 }
@@ -1248,12 +1282,14 @@ export const register: Register = on => {
     const all = Array.isArray(raw) ? (raw as HistoryBlock[]) : []
     const range = await read($, histRange)
     const perSession = range === 'semana' || range === 'mes'
-    const who = perSession ? await read($, histSession) : ''
+    const whoPick = perSession ? await read($, histSession) : ''
+    const titles = [...new Set(all.filter(b => Date.now() - Date.parse(b.resetsAt) < 31 * 86400e3).flatMap(b => b.top.map(t => t.title)))]
+    // Una sesión elegida que ya no aparece en el último mes vuelve a "Todas".
+    const who = titles.includes(whoPick) ? whoPick : ''
     const groupPick = await read($, histGroup)
     const group = groupPick || (range === 'semana' ? 'bloque' : 'dia')
     const { buckets, unit } = bucketize(all, range, who, group)
     const byBlock = perSession && group === 'bloque'
-    const titles = [...new Set(all.filter(b => Date.now() - Date.parse(b.resetsAt) < 31 * 86400e3).flatMap(b => b.top.map(t => t.title)))]
     const width = Math.max(260, Math.min(900, (e.props.bodyColumns ?? 60) * 8))
     const snapNow = await read($, snapshot)
     const curReset = snapNow?.weeklyResetsAt ? Date.parse(snapNow.weeklyResetsAt) : 0
@@ -1329,7 +1365,9 @@ export const register: Register = on => {
               {wk === 0 && L(' Línea punteada: proyección lineal; raya gris: ahora.', ' Dashed line: linear projection; gray line: now.')}</Text>
             {(() => {
               const v = wk === 0 ? snapNow?.weekUsd : costs[wkEnd]
-              const text = v === undefined
+              const text = v !== undefined && v < 0
+                ? L('Gasto a precios de API: no disponible (no quedan registros de esa semana).', 'Spend at API prices: unavailable (no logs left for that week).')
+                : v === undefined
                 ? (wk === 0 ? null : L('Gasto a precios de API: calculando… (puede tardar unos segundos)', 'Spend at API prices: calculating… (may take a few seconds)'))
                 : wk === 0
                 ? L(`Llevas gastado esta semana: ${usd(v)} a precios de API.`, `Spent so far this week: ${usd(v)} at API prices.`)
@@ -1390,6 +1428,8 @@ export const register: Register = on => {
     const myIdx = snap.sessions.findIndex(s => s.id === me)
     const rows = snap.sessions.map((s, i) => ({ s, i })).filter(({ i }) => i < fit)
     if (myIdx >= fit) rows[rows.length - 1] = { s: snap.sessions[myIdx]!, i: myIdx }
+    const usedBy = (list: typeof rows) => list.reduce((a, r) => a + perRow + (r.s.stop ? 1 : 0), 0)
+    while (rows.length > 1 && usedBy(rows) > budget) rows.splice(rows.length - 2, 1)
     const W = { wide: { head: 24, row: 16, name: 36, title: 34 }, mid: { head: 14, row: 10, name: 24, title: 22 }, narrow: { head: 8, row: 10, name: 0, title: 30 } }[mode]
     const cut = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
     const cells = (pct: number, width: number) => Math.max(0, Math.min(width, Math.round((pct / 100) * width)))
@@ -1435,7 +1475,7 @@ export const register: Register = on => {
                   const kind = snap.sessions.find(s => s.id === me)?.stop
                   if (!resume) return L('⏸ pausada', '⏸ paused')
                   const iso = new Date(resume).toISOString()
-                  const why = kind === 'semanal' ? L('tope semanal', 'weekly cap') : kind === 'tope' ? L('tope 5 h', '5-h cap') : L(`freno 5 h`, '5-h brake')
+                  const why = kind === 'semanal' ? L('tope semanal', 'weekly cap') : kind === 'tope' ? L('tope 5 h', '5-h cap') : kind === 'limite' ? L('límite 5 h', '5-h limit') : L('freno 5 h', '5-h brake')
                   const when = kind === 'semanal' ? dayHour(iso) : hhmm(iso)
                   return mode === 'wide' ? L(`⏸ ${why} · reanuda ${when}`, `⏸ ${why} · resumes ${when}`) : `⏸ ${why} · ${when}`
                 })()}</Text>
@@ -1515,14 +1555,14 @@ export const register: Register = on => {
               const rest = ms > 0 ? (ms >= 86400e3 ? `${Math.floor(ms / 86400e3)} d ${Math.floor((ms % 86400e3) / 3600e3)} h` : `${Math.floor(ms / 3600e3)} h`) : ''
               return (
                 <Box flexDirection="row" alignItems="center" gap="xs" minHeight={moreBtn ? 2 : undefined}>
-                  <Text size="caption" dimColor>{mode === 'wide' ? L('Semanal · todos los modelos', 'Weekly · all models') : L('Semanal', 'Weekly')} {fmt(snap.weekly)} %</Text>
+                  <Text size="caption" dimColor wrap="truncate">{mode === 'wide' ? L('Semanal · todos los modelos', 'Weekly · all models') : L('Semanal', 'Weekly')} {fmt(snap.weekly)} %</Text>
                   {dot}
-                  {rest && <Text size="caption" dimColor>{mode === 'wide' ? L(`se reinicia en ${rest}`, `resets in ${rest}`) : rest}</Text>}
+                  {rest && <Text size="caption" dimColor wrap="truncate">{mode === 'wide' ? L(`se reinicia en ${rest}`, `resets in ${rest}`) : rest}</Text>}
                   {(() => {
                     const mine = snap.sessions.find(s => s.id === me)
                     if (!mine || (mine.wcap ?? 100) >= 100) return null
                     const near = (mine.wpct ?? 0) >= (mine.wcap ?? 100) * (CFG.warnPct / 100)
-                    return <Text size="caption" color={near ? '#facc15' : undefined} dimColor={!near}>{L(` · esta sesión ${fmt(mine.wpct ?? 0)} % / ${fmt(mine.wcap ?? 100)} %`, ` · this session ${fmt(mine.wpct ?? 0)} % / ${fmt(mine.wcap ?? 100)} %`)}</Text>
+                    return <Text size="caption" wrap="truncate" color={near ? '#facc15' : undefined} dimColor={!near}>{L(` · esta sesión ${fmt(mine.wpct ?? 0)} % / ${fmt(mine.wcap ?? 100)} %`, ` · this session ${fmt(mine.wpct ?? 0)} % / ${fmt(mine.wcap ?? 100)} %`)}</Text>
                   })()}
                   <Box flexGrow={1} />
                   {moreBtn}
