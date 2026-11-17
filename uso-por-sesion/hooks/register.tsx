@@ -1178,15 +1178,17 @@ export const register: Register = on => {
         await syncStop($)
         await update($, cfgTab, () => 'ajustes')
       }
-      const rows: { k: NumKey; label: string; hint: string; step: number; min: number; max: number; show: (v: number) => string }[] = [
+      // Hora del día en medias horas (23.5 = 23:30).
+      const clock = (v: number) => `${String(Math.floor(v)).padStart(2, '0')}:${v % 1 ? '30' : '00'}`
+      const rows: { k: NumKey; label: string; hint: string; step: number; min: number; max: number; wrap?: boolean; show: (v: number) => string }[] = [
         { k: 'brakeAt', label: L('Freno global', 'Global brake'), hint: L('Al llegar a este % del bloque de 5 h se frenan todas las sesiones. Lo que queda sobre el freno es el margen para cerrar ordenado.', 'When the 5-hour block reaches this %, all sessions are braked. What is left above the brake is the margin to wrap up cleanly.'), step: 1, min: 50, max: 99, show: v => `${v} %` },
         { k: 'closeMargin', label: L('Margen de cierre', 'Wrap-up margin'), hint: L('Cuánto antes del tope de una sesión (o del 100 % en una sesión ∞) empieza el cierre ordenado.', "How far before a session's cap (or 100 % for an ∞ session) the clean wrap-up starts."), step: 1, min: 0, max: 10, show: v => `${v} %` },
         { k: 'marginMin', label: L('Reanudar tras el reinicio', 'Resume after reset'), hint: L('Minutos de espera después del reinicio antes de retomar las sesiones frenadas.', 'Minutes to wait after the reset before braked sessions pick up again.'), step: 1, min: 0, max: 30, show: v => `${v} min` },
         { k: 'defaultCap', label: L('Tope por defecto', 'Default cap'), hint: L('Tope con que parte toda sesión que no tenga uno propio. 0 = sin tope.', "Cap every session starts with when it has none of its own. 0 = no cap."), step: 5, min: 0, max: 100, show: v => (v ? `${v} %` : L('sin tope', 'no cap')) },
         { k: 'capStep', label: L('Paso de − / +', '− / + step'), hint: L('Cuánto sube o baja el tope de una sesión con cada toque de − / +.', "How much each − / + press raises or lowers a session's cap."), step: 1, min: 1, max: 50, show: v => `${v} %` },
         { k: 'maxBypass', label: L('Sesiones sin freno (∞)', 'Sessions without brake (∞)'), hint: L('Cuántas sesiones pueden ignorar el freno global a la vez. 0 = función desactivada.', 'How many sessions can ignore the global brake at once. 0 = feature off.'), step: 1, min: 0, max: 3, show: v => (v ? String(v) : L('desactivado', 'off')) },
-        { k: 'sleepStart', label: L('Dormir desde', 'Sleep from'), hint: L('Inicio del horario de sueño (hora local).', "Start of sleep hours (local time)."), step: 1, min: 0, max: 23, show: v => `${String(v).padStart(2, '0')}:00` },
-        { k: 'sleepEnd', label: L('Dormir hasta', 'Sleep until'), hint: L('Fin del horario de sueño (hora local).', 'End of sleep hours (local time).'), step: 1, min: 0, max: 23, show: v => `${String(v).padStart(2, '0')}:00` },
+        { k: 'sleepStart', label: L('Dormir desde', 'Sleep from'), hint: L('Inicio del horario de sueño (hora local).', "Start of sleep hours (local time)."), step: 0.5, min: 0, max: 23.5, wrap: true, show: clock },
+        { k: 'sleepEnd', label: L('Dormir hasta', 'Sleep until'), hint: L('Fin del horario de sueño (hora local).', 'End of sleep hours (local time).'), step: 0.5, min: 0, max: 23.5, wrap: true, show: clock },
         { k: 'warnPct', label: L('Aviso del tope', 'Cap warning'), hint: L('Avisa cuando una sesión llega a este % de su tope.', 'Warns when a session reaches this % of its cap.'), step: 5, min: 50, max: 100, show: v => L(`${v} % del tope`, `${v} % of cap`) },
       ]
       return (
@@ -1204,9 +1206,9 @@ export const register: Register = on => {
               <Box flexDirection="row" alignItems="center" gap="sm" minHeight={2}>
                 <Text weight="medium">{r.label}</Text>
                 <Box flexGrow={1} />
-                <Button key={`${r.k}-dn`} label="−" onPress={() => void set(r.k, Math.max(r.min, cfg[r.k] - r.step))} />
+                <Button key={`${r.k}-dn`} label="−" onPress={() => void set(r.k, r.wrap ? (cfg[r.k] - r.step + 24) % 24 : Math.max(r.min, cfg[r.k] - r.step))} />
                 <Text tabular>{r.show(cfg[r.k])}</Text>
-                <Button key={`${r.k}-up`} label="+" onPress={() => void set(r.k, Math.min(r.max, cfg[r.k] + r.step))} />
+                <Button key={`${r.k}-up`} label="+" onPress={() => void set(r.k, r.wrap ? (cfg[r.k] + r.step) % 24 : Math.min(r.max, cfg[r.k] + r.step))} />
               </Box>
               <Text size="caption" dimColor>{r.hint}{cfg[r.k] === DEFAULTS[r.k] ? '' : L(` Por defecto: ${r.show(DEFAULTS[r.k])}.`, ` Default: ${r.show(DEFAULTS[r.k])}.`)}</Text>
             </Box>
