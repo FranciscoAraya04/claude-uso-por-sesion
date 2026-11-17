@@ -54,6 +54,10 @@ The English commands (`/session-…`) and the Spanish ones (`/uso-…`) work the
 | `/session-config` | `/uso-config` | Open the panel: Sessions, Settings, History and Commands. |
 | `/session-history` | `/uso-historial` | Open the panel on the history tab. |
 | `/session-brake-test` | `/uso-prueba-freno` | Simulate the brake in this session; run it again to end the test. |
+| `/session-schedule [n] block <text>` | `/uso-programar` | Schedule a prompt for the next 5-hour block. Instead of `block`: `week` (weekly reset) or a time like `07:30`. With n, in that session of the breakdown. |
+| `/session-scheduled [n]` | `/uso-programados` | Show the numbered queue of this session (or session n). |
+| `/session-follow-up 2 <text>` | `/uso-seguimiento` | Add a follow-up to prompt 2 of the queue, sent when Claude finishes answering it. |
+| `/session-unschedule 2 \| all` | `/uso-cancelar` | Cancel prompt 2 of the queue, or all of this session's. |
 
 For commands with an argument, press **Esc** before Enter to close the suggestions menu, or the argument is lost.
 
@@ -67,7 +71,7 @@ For commands with an argument, press **Esc** before Enter to close the suggestio
 
 ## Scheduled prompts
 
-Leave work queued for when the limit resets, without staying up and without spending tokens to schedule it. In the panel's **Sessions** tab, each session's **✉** button opens a box to write a prompt and pick when it's sent: the **next 5-hour block**, the **weekly reset**, or a **time**. Each queue is sorted by send time; every prompt has **✎** edit, **+** add a follow-up right after it (sent when Claude finishes answering it) and **✕** cancel. Prompts never go out while the session is braked or paused. While a session has prompts queued, the plugin asks the OS to keep the computer awake (Windows, macOS, Linux) and releases it when the queue is empty. The Claude app must be open with that session.
+Leave work queued for when the limit resets, without staying up and without spending tokens to schedule it. In the panel's **Sessions** tab, each session's **✉** button opens a box to write a prompt and pick when it's sent: the **next 5-hour block**, the **weekly reset**, or a **time**. Each queue is sorted by send time; every prompt has **✎** edit, **+** add a follow-up right after it (sent when Claude finishes answering it) and **✕** cancel. The same works with commands (`/session-schedule`, `/session-scheduled`, `/session-follow-up`, `/session-unschedule`). Neither buttons nor commands spend tokens, so they work even when you're out of usage. Prompts never go out while the session is braked or paused. While a session has prompts queued, the plugin asks the OS to keep the computer awake (Windows, macOS, Linux) and releases it when the queue is empty. The Claude app must be open with that session.
 
 ## Settings
 

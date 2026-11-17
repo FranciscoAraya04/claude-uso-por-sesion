@@ -40,6 +40,10 @@ No envía nada fuera de tu computador. Solo ejecuta `node hooks/scan.js` para le
 | `/uso-historial` | Abre el mismo panel directo en el historial. |
 | `/uso-sin-freno` / `/uso-sin-freno 3` | Activa o quita el **∞**: esa sesión ignora el freno global hasta el reinicio (máximo 1 a la vez por defecto). |
 | `/uso-prueba-freno` | Simula el freno en esta sesión para probarlo. Repítelo para terminar la prueba. |
+| `/uso-programar bloque <texto>` | Programa un prompt en esta sesión para el próximo bloque de 5 h. En vez de `bloque`: `semana` (reinicio semanal) o una hora como `07:30`. Con un n° antes (`/uso-programar 3 bloque …`), en esa sesión del desglose. |
+| `/uso-programados` / `/uso-programados 3` | Muestra la cola numerada de esta sesión (o la n.º 3). |
+| `/uso-seguimiento 2 <texto>` | Agrega un seguimiento al prompt n.º 2 de la cola: sale cuando Claude termine de responderlo. |
+| `/uso-cancelar 2` / `/uso-cancelar todos` | Cancela el prompt n.º 2 de la cola, o todos los de esta sesión. |
 
 Cada comando tiene un alias en inglés (`/session-usage`, `/session-limit`, `/session-pause`…; lista en el [README principal](../README.md)). Los dos funcionan igual con cualquier idioma.
 
@@ -61,6 +65,7 @@ Para dejar trabajo listo cuando se reinicia el límite, sin quedarte despierto y
 
 - En el panel → **Sesiones**, el botón **✉** de cada sesión abre un cuadro para escribir el prompt y elegir cuándo sale: **próximo bloque** (al reiniciarse el de 5 h, con el margen de reanudación), **reinicio semanal** o una **hora** (si ya pasó hoy, mañana).
 - La cola de cada sesión se ordena por hora de envío. Cada prompt tiene **✎** (editar), **+** (un seguimiento justo después de ese, que sale cuando Claude termine de responderlo) y **✕** (cancelar; sus seguimientos suben un nivel).
+- Lo mismo con comandos: `/uso-programar`, `/uso-programados`, `/uso-seguimiento` y `/uso-cancelar` (ver la tabla de comandos). Ni los botones ni los comandos gastan tokens, así que funcionan aunque te hayas quedado sin uso.
 - El prompt se envía en esa sesión como si lo escribieras tú. Nunca mientras está frenada o pausada: espera a que nada la frene. Reemplaza al aviso automático de "continúa donde quedaste".
 - Mientras una sesión tenga prompts programados, el mod le pide al sistema que **no suspenda el computador** (Windows, macOS o Linux) y lo libera cuando la cola queda vacía. Si igual despierta tarde, lo pendiente sale apenas vuelve.
 - Requiere la app de Claude abierta con esa sesión. Programar no gasta tokens: el texto queda en el almacén local del mod hasta su hora. En la franja, **⏱** indica que esta sesión tiene algo programado.

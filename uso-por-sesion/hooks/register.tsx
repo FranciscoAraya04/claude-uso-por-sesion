@@ -82,6 +82,10 @@ const EN_CMD = {
   'uso-config': 'session-config',
   'uso-historial': 'session-history',
   'uso-prueba-freno': 'session-brake-test',
+  'uso-programar': 'session-schedule',
+  'uso-programados': 'session-scheduled',
+  'uso-cancelar': 'session-unschedule',
+  'uso-seguimiento': 'session-follow-up',
 } as const
 type CmdName = keyof typeof EN_CMD
 // Comando tal como se le muestra a la persona, en su idioma.
@@ -1021,6 +1025,84 @@ async function targets($: $T, arg: string) {
   return Number.isInteger(n) && s ? [{ id: s.id, title: s.title }] : []
 }
 
+// ---------- Comandos de prompts programados (lo mismo que ✉, ✎, + y ✕) ----------
+
+// Sesión a la que apunta un primer argumento numérico ("2 bloque ...") o esta sesión; devuelve el resto.
+async function schedTarget($: $T, args: string) {
+  const rest = args.trim()
+  const m = rest.match(/^(\d+)\s+([\s\S]*)$/)
+  if (m && !/^\d{1,2}:\d{2}/.test(rest)) {
+    const t = (await targets($, m[1]!))[0]
+    return t ? { sid: t.id, title: t.title, rest: m[2]!.trim() } : null
+  }
+  return { sid: await $.session.id(), title: L('esta sesión', 'this session'), rest }
+}
+
+function schedWhen(w: string): { type: Scheduled['type']; time: string } | null {
+  const v = w.toLowerCase()
+  if (['bloque', 'block', 'next', 'proximo', 'próximo'].includes(v)) return { type: 'next', time: '07:30' }
+  if (['semana', 'semanal', 'week', 'weekly'].includes(v)) return { type: 'week', time: '07:30' }
+  if (/^([01]?\d|2[0-3]):[0-5]\d$/.test(v)) return { type: 'time', time: v.padStart(5, '0') }
+  return null
+}
+
+const schedUsage = () => L(`Uso: ${C('uso-programar')} [n°] <bloque | semana | 07:30> <texto>. Recuerda Esc antes de Enter.`,
+  `Usage: ${C('uso-programar')} [n] <block | week | 07:30> <text>. Remember Esc before Enter.`)
+
+const cmdUsoProgramar: Hook<'command.run'> = async ($, e) => {
+  const t = await schedTarget($, e.args)
+  if (!t) return { text: notFound() }
+  const w = t.rest.split(/\s+/)[0] ?? ''
+  const when = schedWhen(w)
+  const text = t.rest.slice(w.length).trim()
+  if (!when || !text) return { text: schedUsage() }
+  const list = await schedList($)
+  const it: Scheduled = { id: `p${Date.now().toString(36)}`, sid: t.sid, text, type: when.type, time: when.time, at: await schedAt($, when.type, when.time), after: null }
+  list.push(it)
+  await schedSave($, list)
+  void schedFire($).catch(() => false)
+  return { text: L(`Programado en ${t.title}: ${schedLabel(it)}.`, `Scheduled in ${t.title}: ${schedLabel(it)}.`) }
+}
+
+// Cola numerada de esta sesión (o la n°), en el mismo orden que el panel.
+const cmdUsoProgramados: Hook<'command.run'> = async ($, e) => {
+  const a = e.args.trim()
+  const t = a ? (await targets($, a))[0] : { id: await $.session.id(), title: L('esta sesión', 'this session') }
+  if (!t) return { text: notFound() }
+  const q = schedOrdered(await schedList($), t.id)
+  if (!q.length) return { text: L(`No hay prompts programados en ${t.title}.`, `No prompts scheduled in ${t.title}.`) }
+  const lines = q.map(({ item, depth }, k) => `${k + 1}. ${'  '.repeat(depth)}${schedLabel(item)}: ${item.text.length > 60 ? item.text.slice(0, 59) + '…' : item.text}`)
+  return { text: [L(`Programados en ${t.title}:`, `Scheduled in ${t.title}:`), ...lines].join('\n') }
+}
+
+const cmdUsoCancelar: Hook<'command.run'> = async ($, e) => {
+  const me = await $.session.id()
+  const a = e.args.trim()
+  const list = await schedList($)
+  if (isAllArg(a)) {
+    const n = list.filter(i => i.sid === me).length
+    await schedSave($, list.filter(i => i.sid !== me))
+    return { text: L(`Cancelados ${n} prompts de esta sesión.`, `Canceled ${n} prompts in this session.`) }
+  }
+  const item = schedOrdered(list, me)[Number(a) - 1]?.item
+  if (!a || !item) return { text: L(`Uso: ${C('uso-cancelar')} <n° de ${C('uso-programados')}> o todos.`, `Usage: ${C('uso-cancelar')} <n from ${C('uso-programados')}> or all.`) }
+  await schedDelete($, item.id)
+  return { text: L(`Cancelado: ${schedLabel(item)}.`, `Canceled: ${schedLabel(item)}.`) }
+}
+
+const cmdUsoSeguimiento: Hook<'command.run'> = async ($, e) => {
+  const me = await $.session.id()
+  const m = e.args.trim().match(/^(\d+)\s+([\s\S]+)$/)
+  const list = await schedList($)
+  const parent = m ? schedOrdered(list, me)[Number(m[1]) - 1]?.item : undefined
+  if (!m || !parent) return { text: L(`Uso: ${C('uso-seguimiento')} <n° de ${C('uso-programados')}> <texto>.`, `Usage: ${C('uso-seguimiento')} <n from ${C('uso-programados')}> <text>.`) }
+  const id = `p${Date.now().toString(36)}`
+  for (const c of list) if (c.after === parent.id) c.after = id
+  list.push({ id, sid: me, text: m[2]!.trim(), type: parent.type, at: parent.at, after: parent.id })
+  await schedSave($, list)
+  return { text: L('Seguimiento agregado: sale cuando Claude termine de responder el anterior.', 'Follow-up added: sent when Claude finishes answering the previous one.') }
+}
+
 // Handlers de comandos: cada uno se registra con su nombre en español y su alias en inglés.
 const notFound = () => L('No encontré esa sesión. Usa el n° del desglose, "todas" o nada para esta sesión.', 'Session not found. Use the number from the list, "all", or nothing for this session.')
 
@@ -1181,6 +1263,10 @@ export const register: Register = on => {
       { name: 'uso-historial', description: L('Abre el historial de bloques de 5 h en un panel aparte', 'Open the 5-hour block history in a separate pane') },
       { name: 'uso-limite', description: L('Tope de esta sesión en % del bloque de 5 h', "This session's cap as % of the 5-hour block"), argumentHint: L('<n> | quitar', '<n> | remove') },
       { name: 'uso-pausar', description: L('Pausa esta sesión, la n° del desglose o todas', 'Pause this session, number n in the list, or all'), argumentHint: anyHint },
+      { name: 'uso-programar', description: L('Programa un prompt en esta sesión o la n°: próximo bloque, semana o una hora', 'Schedule a prompt in this session or number n: next block, week or a time'), argumentHint: L('[n°] <bloque | semana | 07:30> <texto>', '[n] <block | week | 07:30> <text>') },
+      { name: 'uso-programados', description: L('Muestra la cola de prompts programados, numerada', 'Show the numbered queue of scheduled prompts'), argumentHint: L('[n°]', '[n]') },
+      { name: 'uso-cancelar', description: L('Cancela el prompt programado n° de esta sesión, o todos', 'Cancel scheduled prompt n in this session, or all'), argumentHint: L('<n°> | todos', '<n> | all') },
+      { name: 'uso-seguimiento', description: L('Agrega un seguimiento al prompt programado n°', 'Add a follow-up to scheduled prompt n'), argumentHint: L('<n°> <texto>', '<n> <text>') },
       { name: 'uso-reanudar', description: L('Reanuda esta sesión, la n° del desglose o todas', 'Resume this session, number n in the list, or all'), argumentHint: anyHint },
     ]
     for (const d of defs) {
@@ -1238,6 +1324,15 @@ export const register: Register = on => {
 
   on('command.run', { command: 'uso-sin-freno' }, cmdUsoSinFreno)
   on('command.run', { command: 'session-no-brake' }, cmdUsoSinFreno)
+
+  on('command.run', { command: 'uso-programar' }, cmdUsoProgramar)
+  on('command.run', { command: 'session-schedule' }, cmdUsoProgramar)
+  on('command.run', { command: 'uso-programados' }, cmdUsoProgramados)
+  on('command.run', { command: 'session-scheduled' }, cmdUsoProgramados)
+  on('command.run', { command: 'uso-cancelar' }, cmdUsoCancelar)
+  on('command.run', { command: 'session-unschedule' }, cmdUsoCancelar)
+  on('command.run', { command: 'uso-seguimiento' }, cmdUsoSeguimiento)
+  on('command.run', { command: 'session-follow-up' }, cmdUsoSeguimiento)
 
   on('command.run', { command: 'uso-config' }, cmdUsoConfig)
   on('command.run', { command: 'session-config' }, cmdUsoConfig)
@@ -1486,34 +1581,66 @@ export const register: Register = on => {
     }
     if (tab === 'ayuda') {
       const any = L('[n° | todas]', '[n | all]')
-      const help: [string, string][] = [
-        [C('uso'), L('Oculta o muestra la franja (también: Ajustes → Ocultar franja).', 'Hides or shows the band (also: Settings → Hide band).')],
-        [C('uso-config'), L('Abre este panel.', 'Opens this pane.')],
-        [C('uso-historial'), L('Abre el panel en el historial.', 'Opens the pane on the history.')],
-        [`${C('uso-limite')} 30`, L('Tope de esta sesión en % del bloque de 5 h.', "This session's cap as % of the 5-hour block.")],
-        [C('uso-limite'), L('Muestra el tope actual de esta sesión.', "Shows this session's current cap.")],
-        [`${C('uso-limite')} ${L('semanal', 'weekly')} 20`, L('Tope semanal de esta sesión en % del límite semanal (quitar: sin tope).', "This session's weekly cap as % of the weekly limit (remove: no cap).")],
-        [`${C('uso-limite')} ${L('quitar', 'remove')}`, L('Quita el tope de esta sesión.', "Removes this session's cap.")],
-        [`${C('uso-pausar')} ${any}`, L('Pausa esta sesión, la n° del desglose o todas.', 'Pauses this session, number n in the list, or all.')],
-        [`${C('uso-reanudar')} ${any}`, L('Reanuda; las que trabajaban retoman solas.', 'Resumes; those that were working pick up on their own.')],
-        [`${C('uso-continuar')} ${any}`, L('Libera freno y tope hasta el reinicio (sin nada: esta sesión).', 'Releases brake and cap until the reset (no argument: this session).')],
-        [`${C('uso-sin-freno')} ${L('[n°]', '[n]')}`, L('Activa o quita el ∞: la sesión ignora el freno global hasta el reinicio (pide confirmar).', 'Toggles ∞: the session ignores the global brake until the reset (asks to confirm).')],
-        [C('uso-prueba-freno'), L('Simula el freno en esta sesión; repítelo para terminar.', 'Simulates the brake in this session; run it again to end.')],
+      const sections: { title: string; items: [string, string][] }[] = [
+        { title: L('Panel y franja', 'Pane and band'), items: [
+          [C('uso-config'), L('Abre este panel.', 'Opens this pane.')],
+          [C('uso-historial'), L('Abre el panel en el historial.', 'Opens the pane on the history.')],
+          [C('uso'), L('Oculta o muestra la franja (también: Ajustes → Ocultar franja).', 'Hides or shows the band (also: Settings → Hide band).')],
+        ] },
+        { title: L('Pausar y reanudar', 'Pause and resume'), items: [
+          [`${C('uso-pausar')} ${any}`, L('Pausa esta sesión, la n° del desglose o todas.', 'Pauses this session, number n in the list, or all.')],
+          [`${C('uso-reanudar')} ${any}`, L('Reanuda; las que trabajaban retoman solas.', 'Resumes; those that were working pick up on their own.')],
+        ] },
+        { title: L('Topes', 'Caps'), items: [
+          [`${C('uso-limite')} 30`, L('Tope de esta sesión en % del bloque de 5 h.', "This session's cap as % of the 5-hour block.")],
+          [C('uso-limite'), L('Muestra el tope actual de esta sesión.', "Shows this session's current cap.")],
+          [`${C('uso-limite')} ${L('quitar', 'remove')}`, L('Quita el tope de esta sesión.', "Removes this session's cap.")],
+          [`${C('uso-limite')} ${L('semanal', 'weekly')} 20`, L('Tope semanal de esta sesión en % del límite semanal (quitar: sin tope).', "This session's weekly cap as % of the weekly limit (remove: no cap).")],
+        ] },
+        { title: L('Freno', 'Brake'), items: [
+          [`${C('uso-continuar')} ${any}`, L('Libera freno y tope hasta el reinicio (sin nada: esta sesión).', 'Releases brake and cap until the reset (no argument: this session).')],
+          [`${C('uso-sin-freno')} ${L('[n°]', '[n]')}`, L('Activa o quita el ∞: la sesión ignora el freno global hasta el reinicio (pide confirmar).', 'Toggles ∞: the session ignores the global brake until the reset (asks to confirm).')],
+          [C('uso-prueba-freno'), L('Simula el freno en esta sesión; repítelo para terminar.', 'Simulates the brake in this session; run it again to end.')],
+        ] },
       ]
+      const rule = <Text dimColor wrap="truncate">{'─'.repeat(Math.max(20, Math.min(120, (e.props.bodyColumns ?? 60) - 4)))}</Text>
+      const head = (t: string) => <Text weight="semibold">{t}</Text>
       return (
         <Box flexDirection="column" gap="sm">
           {tabs}
           <Text size="caption" dimColor>{L('En los comandos con número o texto, presiona Esc antes de Enter para cerrar el menú de sugerencias.', 'For commands with a number or text, press Esc before Enter to close the suggestions menu.')}</Text>
-          {help.map(([cmd, what]) => (
+          {sections.map((sec, k) => (
+            <Box key={sec.title} flexDirection="column" gap="sm">
+              {k > 0 && rule}
+              {head(sec.title)}
+              {sec.items.map(([cmd, what]) => (
+                <Box key={cmd} flexDirection="column">
+                  <Text weight="medium" mono>{cmd}</Text>
+                  <Text size="caption" dimColor>{what}</Text>
+                </Box>
+              ))}
+            </Box>
+          ))}
+          {rule}
+          {head(L('✉ Prompts programados', '✉ Scheduled prompts'))}
+          {([
+            [`${C('uso-programar')} ${L('[n°] bloque <texto>', '[n] block <text>')}`, L('Sale al empezar el próximo bloque de 5 h. En vez de bloque: semana (reinicio semanal) o una hora como 07:30. Con n°, en esa sesión del desglose.', 'Goes out when the next 5-hour block starts. Instead of block: week (weekly reset) or a time like 07:30. With n, in that session of the list.')],
+            [C('uso-programados'), L('Muestra la cola de esta sesión, numerada.', "Shows this session's queue, numbered.")],
+            [`${C('uso-seguimiento')} ${L('<n°> <texto>', '<n> <text>')}`, L('Agrega un seguimiento: sale cuando Claude termine de responder el n°.', 'Adds a follow-up: sent when Claude finishes answering number n.')],
+            [`${C('uso-cancelar')} ${L('<n°> | todos', '<n> | all')}`, L('Cancela ese prompt o todos los de esta sesión.', "Cancels that prompt or all of this session's.")],
+          ] as [string, string][]).map(([cmd, what]) => (
             <Box key={cmd} flexDirection="column">
               <Text weight="medium" mono>{cmd}</Text>
               <Text size="caption" dimColor>{what}</Text>
             </Box>
           ))}
+          <Text size="caption" dimColor>{L('No gastan tokens y funcionan aunque estés sin uso. También con botones: en la pestaña Sesiones, ✉ en la fila de una sesión abre el cuadro para escribir el prompt y elegir cuándo sale (próximo bloque, reinicio semanal o una hora). En la cola: ✎ edita, + agrega un seguimiento que sale cuando Claude termina de responder el anterior, ✕ lo cancela. Nunca salen con la sesión frenada o pausada, y mientras haya alguno el computador no se suspende.', 'They spend no tokens and work even with no usage left. Also with buttons: in the Sessions tab, ✉ on a session row opens the box to write the prompt and pick when it goes out (next block, weekly reset or a time). In the queue: ✎ edits, + adds a follow-up sent when Claude finishes answering the previous one, ✕ cancels it. They never go out while the session is braked or paused, and while any is queued the computer stays awake.')}</Text>
+          {rule}
+          {head(L('Guía rápida', 'Quick guide'))}
           <Text size="caption" weight="medium">{L('Colores del punto', 'Dot colors')}</Text>
           <Text size="caption" dimColor>{L('Verde holgado · amarillo justo · naranjo te pasas por menos de 1 h · rojo 1–2 h · morado 2–3 h · morado oscuro más. Desde rojo parpadea.', 'Green plenty of room · yellow tight · orange you run out less than 1 h early · red 1–2 h · purple 2–3 h · dark purple more. Blinks from red up.')}</Text>
           <Text size="caption" weight="medium">{L('Desglose', 'Breakdown')}</Text>
-          <Text size="caption" dimColor>{L(`− / + cambian el tope de la sesión de a ${CFG.capStep} %; ⏸ / ▶ la pausan o reanudan; ∞ la deja sin freno global (nombre en azul lavanda); la raya clara en la barra marca su tope.`, `− / + change the session's cap by ${CFG.capStep} %; ⏸ / ▶ pause or resume it; ∞ exempts it from the global brake (name in lavender blue); the light mark on the bar shows its cap.`)}</Text>
+          <Text size="caption" dimColor>{L(`− / + cambian el tope de la sesión de a ${CFG.capStep} %; ⏸ / ▶ la pausan o reanudan; ∞ la deja sin freno global (nombre en azul lavanda); ✉ programa un prompt; la raya clara en la barra marca su tope.`, `− / + change the session's cap by ${CFG.capStep} %; ⏸ / ▶ pause or resume it; ∞ exempts it from the global brake (name in lavender blue); ✉ schedules a prompt; the light mark on the bar shows its cap.`)}</Text>
           <Text size="caption" dimColor>{L('Se entrega tal cual, sin garantías; el freno y los topes pueden cortar tareas a la mitad. Ver "Disclaimer" en el README.', 'Provided as is, without warranty; the brake and caps can stop tasks midway. See "Disclaimer" in the README.')}</Text>
         </Box>
       )

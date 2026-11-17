@@ -401,3 +401,46 @@ test('a su hora sale el prompt programado y no su seguimiento', async ($, on) =>
   expect(sent).toEqual(['Primero', 'Después'])
   expect((store.get('programados') as { id: string }[]).map(i => i.id)).toEqual(['c'])
 })
+
+test('los comandos programan, listan, agregan seguimiento y cancelan', async ($, on) => {
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }]])
+  setup(on, store, 30, [{ id: 'yo', title: 'Mía', w: 1 }])
+  await $.command.run({ command: 'uso-limite', args: '90' })
+  const bad = await $.command.run({ command: 'uso-programar', args: 'mañana algo' })
+  expect(String(bad?.text)).toMatch(/Uso:/)
+  await $.command.run({ command: 'uso-programar', args: '23:30 Revisa los tests' })
+  await $.command.run({ command: 'session-schedule', args: '23:45 Arma el informe' })
+  const list = store.get('programados') as { text: string; type: string; time: string }[]
+  expect(list.map(i => [i.type, i.text])).toEqual([['time', 'Revisa los tests'], ['time', 'Arma el informe']])
+  const q = await $.command.run({ command: 'uso-programados', args: '' })
+  const n = String(q?.text).split('\n').find(l => l.includes('Revisa los tests'))?.match(/^(\d+)\./)?.[1]
+  expect(n).toBeTruthy()
+  await $.command.run({ command: 'uso-seguimiento', args: `${n} Y luego súbelo` })
+  const withFollow = store.get('programados') as { text: string; after: string | null }[]
+  expect(withFollow.find(i => i.text === 'Y luego súbelo')?.after).toBeTruthy()
+  const q2 = await $.command.run({ command: 'uso-programados', args: '' })
+  const n2 = String(q2?.text).split('\n').find(l => l.includes('Revisa los tests'))?.match(/^(\d+)\./)?.[1]
+  await $.command.run({ command: 'uso-cancelar', args: n2! })
+  const left = store.get('programados') as { text: string; after: string | null }[]
+  expect(left.find(i => i.text === 'Revisa los tests')).toBeUndefined()
+  expect(left.find(i => i.text === 'Y luego súbelo')?.after).toBeNull()
+  await $.command.run({ command: 'uso-cancelar', args: 'todos' })
+  expect(store.get('programados')).toEqual([])
+})
+
+test('en inglés los comandos programados responden en inglés y la pestaña Commands los muestra', async ($, on) => {
+  const store = new Map<string, unknown>([['config', { lang: 'en', sleepStart: 0, sleepEnd: 0 }]])
+  setup(on, store, 30, [{ id: 'yo', title: 'Mine', w: 1 }])
+  await $.command.run({ command: 'session-limit', args: '90' })
+  expect(String((await $.command.run({ command: 'session-schedule', args: 'tomorrow x' }))?.text)).toMatch(/^Usage: \/session-schedule/)
+  expect(String((await $.command.run({ command: 'session-schedule', args: '23:30 Check the tests' }))?.text)).toMatch(/^Scheduled in this session: (Today|Tomorrow) 23:30/)
+  expect(String((await $.command.run({ command: 'session-scheduled', args: '' }))?.text)).toMatch(/Scheduled in this session:\n1\. (Today|Tomorrow) 23:30: Check the tests/)
+  expect(String((await $.command.run({ command: 'session-follow-up', args: '1 Then push it' }))?.text)).toMatch(/^Follow-up added/)
+  expect(String((await $.command.run({ command: 'session-unschedule', args: 'all' }))?.text)).toBe('Canceled 2 prompts in this session.')
+  expect(String((await $.command.run({ command: 'session-unschedule', args: '' }))?.text)).toMatch(/^Usage: \/session-unschedule/)
+  const pane = await $.ui.mount(PANE)
+  await pane.press({ key: 'tab-ayuda' })
+  for (const t of [/^Pane and band$/, /^Pause and resume$/, /^Caps$/, /^Brake$/, /^✉ Scheduled prompts$/, /^\/session-schedule \[n\] block/, /^\/session-unschedule <n> \| all$/, /spend no tokens/])
+    expect(await pane.find({ type: 'Text', text: t })).toBeTruthy()
+  await pane.unmount()
+})
