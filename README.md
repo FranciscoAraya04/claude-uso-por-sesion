@@ -65,6 +65,10 @@ For commands with an argument, press **Esc** before Enter to close the suggestio
 - **⚙** on the band opens the panel. **Pause all** / **Resume all** are in the Sessions tab, **Hide band** in Settings. **Continue** appears on the band while this session is braked.
 - If the rows don't fit, the band shows the ones that do, and **See all** opens the Sessions tab.
 
+## Scheduled prompts
+
+Leave work queued for when the limit resets, without staying up and without spending tokens to schedule it. In the panel's **Sessions** tab, each session's **✉** button opens a box to write a prompt and pick when it's sent: the **next 5-hour block**, the **weekly reset**, or a **time**. Each queue is sorted by send time; every prompt has **✎** edit, **+** add a follow-up right after it (sent when Claude finishes answering it) and **✕** cancel. Prompts never go out while the session is braked or paused. While a session has prompts queued, the plugin asks the OS to keep the computer awake (Windows, macOS, Linux) and releases it when the queue is empty. The Claude app must be open with that session.
+
 ## Settings
 
 | Setting | Default | What it does |

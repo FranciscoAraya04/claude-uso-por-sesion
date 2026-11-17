@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Hook, Register } from 'claude-code'
 
-import type { BrakeTest, HistoryBlock, SessionShare, Snapshot } from '../types'
+import type { BrakeTest, HistoryBlock, Scheduled, SchedDraft, SchedUi, SessionShare, Snapshot } from '../types'
 
 const snapshot = atom({ plugin: 'uso-por-sesion', key: 'snapshot' } as const, null)
 const isOpen = atom({ plugin: 'uso-por-sesion', key: 'isOpen' } as const, false)
@@ -36,6 +36,17 @@ const cfgTab = atom({ plugin: 'uso-por-sesion', key: 'cfgTab' } as const, 'sesio
 // Sesión cuyo botón ∞ espera el segundo toque de confirmación ('' = ninguna).
 const armed = atom({ plugin: 'uso-por-sesion', key: 'armed' } as const, '')
 const stoppedBy = atom({ plugin: 'uso-por-sesion', key: 'stoppedBy' } as const, '')
+
+// Prompts programados: cuadro abierto en el panel, su borrador y error, el último enviado que aún espera
+// respuesta (sus seguimientos salen al terminar el turno) y un contador para redibujar tras cada cambio.
+const schedUi = atom({ plugin: 'uso-por-sesion', key: 'schedUi' } as const, null as SchedUi | null)
+const schedDraft = atom({ plugin: 'uso-por-sesion', key: 'schedDraft' } as const, { text: '', type: 'next', time: '07:30' } as SchedDraft)
+const schedErr = atom({ plugin: 'uso-por-sesion', key: 'schedErr' } as const, '')
+const schedActive = atom({ plugin: 'uso-por-sesion', key: 'schedActive' } as const, '')
+const schedRev = atom({ plugin: 'uso-por-sesion', key: 'schedRev' } as const, 0)
+const SCHED_KEY = 'programados'
+// Color de lo programado: el mismo lavanda de la luna y de las sesiones ∞.
+const SCHED_COLOR = '#a5b4fc'
 
 const FIVE_HOURS = 5 * 3600e3
 // Color de las sesiones ∞: el mismo azul lavanda de la luna del horario de sueño (se lee como "modo superior", no como error).
@@ -730,6 +741,174 @@ async function syncStop($: $T) {
   return r
 }
 
+// ---------- Prompts programados ----------
+
+async function schedList($: { store: { get: (k: string) => Promise<unknown> } }): Promise<Scheduled[]> {
+  const raw = await $.store.get(SCHED_KEY)
+  return Array.isArray(raw) ? (raw as Scheduled[]) : []
+}
+
+async function schedSave($: $T, list: Scheduled[]) {
+  await $.store.set(SCHED_KEY, list)
+  await update($, schedRev, n => n + 1)
+}
+
+// Cuándo sale un prompt con hora propia: el próximo reinicio del bloque o de la semana (con el margen de
+// reanudación) o la próxima vez que el reloj marque esa hora. Sin dato del reinicio, sale apenas se pueda.
+async function schedAt($: $T, type: Scheduled['type'], time: string) {
+  const now = Date.now()
+  if (type === 'time') {
+    const [h, m] = time.split(':').map(Number)
+    const d = new Date(now)
+    d.setHours(h!, m!, 0, 0)
+    if (d.getTime() <= now) d.setDate(d.getDate() + 1)
+    return d.getTime()
+  }
+  const snap = await read($, snapshot)
+  const iso = type === 'week' ? snap?.weeklyResetsAt : snap?.resetsAt
+  return iso && Date.parse(iso) > now ? Date.parse(iso) + resumeMargin() : now
+}
+
+// Orden de una sesión: los de hora propia por hora de envío; cada uno seguido de sus seguimientos, en cadena.
+function schedOrdered(list: Scheduled[], sid: string) {
+  const own = list.filter(i => i.sid === sid)
+  const ids = new Set(own.map(i => i.id))
+  const out: { item: Scheduled; depth: number }[] = []
+  const walk = (parent: string, depth: number) => {
+    for (const i of own.filter(x => x.after === parent)) { out.push({ item: i, depth }); walk(i.id, depth + 1) }
+  }
+  for (const r of own.filter(i => !i.after || !ids.has(i.after)).sort((a, b) => a.at - b.at)) { out.push({ item: r, depth: 0 }); walk(r.id, 1) }
+  return out
+}
+
+function schedLabel(i: Scheduled) {
+  if (i.after) return L('Después del anterior', 'After the previous one')
+  const iso = new Date(i.at).toISOString()
+  if (i.type === 'next') return L(`Próximo bloque · ${hhmm(iso)}`, `Next block · ${hhmm(iso)}`)
+  if (i.type === 'week') return L(`Semanal · ${dayHour(iso)}`, `Weekly · ${dayHour(iso)}`)
+  const today = new Date().toDateString() === new Date(i.at).toDateString()
+  const tomorrow = new Date(Date.now() + 86400e3).toDateString() === new Date(i.at).toDateString()
+  return today ? L(`Hoy ${hhmm(iso)}`, `Today ${hhmm(iso)}`) : tomorrow ? L(`Mañana ${hhmm(iso)}`, `Tomorrow ${hhmm(iso)}`) : dayHour(iso)
+}
+
+// Guarda el borrador del cuadro abierto: nuevo, editado o seguimiento de otro prompt.
+async function schedSubmit($: $T) {
+  const ui = await read($, schedUi)
+  const d = await read($, schedDraft)
+  if (!ui) return
+  const text = d.text.trim()
+  if (!text) return void update($, schedErr, () => L('Escribe el prompt primero.', 'Write the prompt first.'))
+  if (d.type === 'time' && !/^([01]?\d|2[0-3]):[0-5]\d$/.test(d.time.trim())) return void update($, schedErr, () => L('Escribe la hora como 07:30.', 'Write the time like 07:30.'))
+  const list = await schedList($)
+  const time = d.time.trim().padStart(5, '0')
+  if (ui.mode === 'edit') {
+    const it = list.find(i => i.id === ui.id)
+    if (it) {
+      it.text = text
+      if (!it.after) Object.assign(it, { type: d.type, time, at: await schedAt($, d.type, time) })
+    }
+  } else if (ui.mode === 'follow') {
+    const parent = list.find(i => i.id === ui.id)
+    if (!parent) return void update($, schedUi, () => null)
+    const id = `p${Date.now().toString(36)}`
+    // Entra justo después de su padre: lo que antes seguía al padre ahora sigue al nuevo.
+    for (const c of list) if (c.after === parent.id) c.after = id
+    list.push({ id, sid: ui.sid, text, type: parent.type, at: parent.at, after: parent.id })
+  } else {
+    list.push({ id: `p${Date.now().toString(36)}`, sid: ui.sid, text, type: d.type, time, at: await schedAt($, d.type, time), after: null })
+  }
+  await schedSave($, list)
+  await update($, schedErr, () => '')
+  await update($, schedUi, () => null)
+}
+
+// Cancela un prompt; sus seguimientos no se pierden: suben un nivel y, si quedan arriba, heredan su hora.
+async function schedDelete($: $T, id: string) {
+  const list = await schedList($)
+  const it = list.find(i => i.id === id)
+  if (!it) return
+  for (const c of list) if (c.after === id) Object.assign(c, it.after ? { after: it.after } : { after: null, type: it.type, time: it.time, at: it.at })
+  await schedSave($, list.filter(i => i !== it))
+}
+
+async function schedOpen($: $T, ui: SchedUi) {
+  const cur = await read($, schedUi)
+  const same = cur && cur.mode === ui.mode && cur.sid === ui.sid && cur.id === ui.id
+  await update($, schedErr, () => '')
+  if (same) return void update($, schedUi, () => null)
+  const it = ui.id ? (await schedList($)).find(i => i.id === ui.id) : undefined
+  await update($, schedDraft, () => (ui.mode === 'edit' && it ? { text: it.text, type: it.type, time: it.time ?? '07:30' } : { text: '', type: 'next', time: '07:30' }))
+  await update($, schedUi, () => ui)
+}
+
+// Mantener el equipo despierto mientras esta sesión tenga prompts programados: un proceso que lo pide al
+// sistema (Windows, macOS o Linux) y que se termina cuando ya no hacen falta.
+const AWAKE_PS = "Add-Type -Name P -Namespace W -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern uint SetThreadExecutionState(uint f);'; while ($true) { [void][W.P]::SetThreadExecutionState([uint32]2147483649); 'tick'; Start-Sleep -Seconds 30 }"
+const AWAKE_LOOP = 'while true; do echo tick; sleep 30; done'
+const AWAKE_ARGV = [
+  ['powershell', '-NoProfile', '-NonInteractive', '-Command', AWAKE_PS],
+  ['caffeinate', '-i', 'sh', '-c', AWAKE_LOOP],
+  ['systemd-inhibit', '--what=sleep:idle', '--why=uso-por-sesion', 'sh', '-c', AWAKE_LOOP],
+]
+let awake: { stop: boolean } | null = null
+// Si ningún sistema aceptó mantenerlo despierto, no se vuelve a intentar en esta sesión.
+let awakeUnavailable = false
+function keepAwake($: $T, on: boolean) {
+  if (!on) {
+    if (awake) awake.stop = true
+    awake = null
+    return
+  }
+  if (awake || awakeUnavailable) return
+  const h = { stop: false }
+  awake = h
+  void (async () => {
+    for (const argv of AWAKE_ARGV) {
+      let ticked = false
+      try {
+        for await (const _ of $.process.spawn({ argv })) {
+          ticked = true
+          if (h.stop) break
+        }
+      } catch {}
+      if (ticked || h.stop) break
+      if (argv === AWAKE_ARGV[AWAKE_ARGV.length - 1]) awakeUnavailable = true
+    }
+    if (awake === h) awake = null
+  })()
+}
+
+// Envía, en esta sesión, el próximo prompt que toca: un seguimiento cuyo anterior ya tuvo respuesta, o uno
+// cuya hora llegó. Nunca mientras la sesión está frenada o pausada: espera a que nada la frene.
+async function schedFire($: $T) {
+  const me = await $.session.id()
+  const list = await schedList($)
+  const mine = list.filter(i => i.sid === me)
+  keepAwake($, mine.length > 0)
+  if (!mine.length || (await read($, schedActive))) return false
+  if (await stopReason($)) return false
+  const ids = new Set(list.map(i => i.id))
+  const due = mine.filter(i => (!i.after || !ids.has(i.after)) && i.at <= Date.now()).sort((a, b) => a.at - b.at)[0]
+  if (!due) return false
+  await schedSave($, list.filter(i => i !== due))
+  await update($, schedActive, () => due.id)
+  // El prompt programado reemplaza al aviso de "continúa donde quedaste".
+  await update($, stoppedBy, () => '')
+  await $.prompt.submit({ text: due.text })
+  return true
+}
+
+// Al terminar un turno: los seguimientos del prompt enviado quedan listos para salir de inmediato.
+async function schedTurnDone($: $T) {
+  const active = await read($, schedActive)
+  if (!active) return
+  const list = await schedList($)
+  for (const c of list) if (c.after === active) Object.assign(c, { after: null, at: 0 })
+  await schedSave($, list)
+  await update($, schedActive, () => '')
+  await schedFire($)
+}
+
 // Cada minuto: si esta sesión se detuvo trabajando y ya nada la frena, retoma la tarea.
 async function maybeResume($: $T) {
   const was = await read($, stoppedBy)
@@ -1010,14 +1189,15 @@ export const register: Register = on => {
     }
     await update($, nowMs, () => Date.now())
     await markAlive($, true).catch(() => {})
+    void schedFire($).catch(() => false)
     $.clock.every(60000, async () => {
       await loadCfg($)
       await markAlive($, true).catch(() => {})
       await update($, nowMs, () => Date.now())
       await refresh($).catch(() => {})
-      await maybeResume($).catch(() => {})
+      if (!(await schedFire($).catch(() => false))) await maybeResume($).catch(() => {})
     })
-    refresh($).catch(err => update($, status, () => `Error: ${String(err).slice(0, 120)}`))
+    refresh($).catch(err => update($, status, () => `Error: ${String(err).slice(0, 120)}`).catch(() => {}))
     return result
   })
 
@@ -1077,6 +1257,63 @@ export const register: Register = on => {
       </Box>
     )
     if (tab === 'sesiones') {
+      await read($, schedRev)
+      const sched = await schedList($)
+      const sUi = await read($, schedUi)
+      const sDraft = await read($, schedDraft)
+      const sErr = await read($, schedErr)
+      const Input = 'Input' in els ? els.Input : undefined
+      const snapS = await read($, snapshot)
+      const composer = (sid: string, depth: number) => {
+        if (!sUi || sUi.sid !== sid) return null
+        const follow = sUi.mode === 'follow' || (sUi.mode === 'edit' && !!sched.find(i => i.id === sUi.id)?.after)
+        const nextAt = snapS?.resetsAt ? hhmm(new Date(Date.parse(snapS.resetsAt) + resumeMargin()).toISOString()) : L('ahora', 'now')
+        const weekAt = snapS?.weeklyResetsAt ? dayHour(new Date(Date.parse(snapS.weeklyResetsAt) + resumeMargin()).toISOString()) : '—'
+        const pick = (type: SchedDraft['type']) => () => void update($, schedDraft, d => ({ ...d, type }))
+        return (
+          <Box key={`sc-${sid}`} flexDirection="column" gap="xs" paddingLeft={depth * 2}>
+            <Text size="caption" dimColor>{sUi.mode === 'edit' ? L('Editar prompt', 'Edit prompt') : follow ? L('Seguimiento: sale cuando Claude termine de responder el anterior', 'Follow-up: sent when Claude finishes answering the previous one') : L('Nuevo prompt programado', 'New scheduled prompt')}</Text>
+            {Input && <Input key={`si-${sid}`} rows={3} autoFocus placeholder={L('Revisa los resultados y arma el informe con las 3 figuras', 'Review the results and write the report with the 3 figures')} value={sDraft.text} onInput={v => void update($, schedDraft, d => ({ ...d, text: v }))} onSubmit={v => void update($, schedDraft, d => ({ ...d, text: v })).then(() => schedSubmit($))} submitLabel={L('programar', 'schedule')} />}
+            {!follow && (
+              <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap="sm">
+                <Button key={`st-next-${sid}`} label={L(`↻ Próximo bloque · ${nextAt}`, `↻ Next block · ${nextAt}`)} variant={sDraft.type === 'next' ? 'primary' : 'secondary'} onPress={pick('next')} />
+                <Button key={`st-week-${sid}`} label={L(`Semanal · ${weekAt}`, `Weekly · ${weekAt}`)} variant={sDraft.type === 'week' ? 'primary' : 'secondary'} onPress={pick('week')} />
+                <Button key={`st-time-${sid}`} label={L('Hora', 'Time')} variant={sDraft.type === 'time' ? 'primary' : 'secondary'} onPress={pick('time')} />
+                {sDraft.type === 'time' && Input && <Input key={`sh-${sid}`} placeholder="07:30" value={sDraft.time} onInput={v => void update($, schedDraft, d => ({ ...d, time: v }))} onSubmit={v => void update($, schedDraft, d => ({ ...d, time: v })).then(() => schedSubmit($))} />}
+              </Box>
+            )}
+            <Box flexDirection="row" alignItems="center" gap="sm">
+              <Box flexGrow={1} />
+              <Button key={`sx-${sid}`} label={L('Cancelar', 'Cancel')} onPress={() => void update($, schedUi, () => null)} />
+              <Button key={`ss-${sid}`} label={sUi.mode === 'edit' ? L('Guardar', 'Save') : L('Programar', 'Schedule')} variant="primary" onPress={() => void schedSubmit($)} />
+            </Box>
+            {sErr && <Text size="caption" color="#ef4444">{sErr}</Text>}
+          </Box>
+        )
+      }
+      const queue = (sid: string) => {
+        const list = schedOrdered(sched, sid)
+        return (
+          <Box key={`sq-${sid}`} flexDirection="column" gap="xs">
+            {sUi?.mode === 'new' && composer(sid, 0)}
+            {list.map(({ item, depth }) => (
+              sUi?.mode === 'edit' && sUi.id === item.id
+                ? composer(sid, depth)
+                : <Box key={`sw-${item.id}`} flexDirection="column" gap="xs">
+                    <Box flexDirection="row" alignItems="center" gap="sm" paddingLeft={depth * 2}>
+                      <Text size="caption" color={SCHED_COLOR}>{item.after ? '↳' : '⏱'} {schedLabel(item)}</Text>
+                      <Box flexGrow={1} flexShrink={1}><Text size="caption" wrap="truncate">{item.text}</Text></Box>
+                      <Button key={`pe-${item.id}`} label="✎" onPress={() => void schedOpen($, { mode: 'edit', sid, id: item.id })} />
+                      <Button key={`pf-${item.id}`} label="+" onPress={() => void schedOpen($, { mode: 'follow', sid, id: item.id })} />
+                      <Button key={`px-${item.id}`} label="✕" onPress={() => void schedDelete($, item.id)} />
+                    </Box>
+                    {sUi?.mode === 'follow' && sUi.id === item.id && composer(sid, depth + 1)}
+                  </Box>
+            ))}
+          </Box>
+        )
+      }
+      const schedCount = (sid: string) => sched.filter(i => i.sid === sid).length
       const snap = await read($, snapshot)
       const view = await read($, capView)
       const Select = 'Select' in els ? els.Select : undefined
@@ -1136,6 +1373,7 @@ export const register: Register = on => {
             <Button key="pause-all" label={L('⏸ Pausar todas', '⏸ Pause all')} onPress={() => void setAll($, true)} />
             <Button key="resume-all" label={L('▶ Reanudar todas', '▶ Resume all')} onPress={() => void setAll($, false)} />
           </Box>
+          <Text size="caption" dimColor>{L('✉ programa un prompt en esa sesión para el próximo bloque, el reinicio semanal o una hora. Mientras haya prompts programados, el computador no se suspende; si igual despierta tarde, lo pendiente sale apenas vuelve.', '✉ schedules a prompt in that session for the next block, the weekly reset or a time. While prompts are scheduled the computer stays awake; if it still wakes late, what is pending goes out as soon as it is back.')}</Text>
           {snap.sessions.map((s, i) => {
             const atMax = s.cap === undefined || s.cap >= 100
             const tag = stopLabel(s)
@@ -1161,8 +1399,10 @@ export const register: Register = on => {
                   {s.stop
                     ? <Button key={`pp-${s.id}`} label={L('▶ Reanudar', '▶ Resume')} variant="primary" onPress={() => void releaseSession($, s.id)} />
                     : <Button key={`pp-${s.id}`} label="⏸" onPress={() => void setPaused($, s.id, true)} />}
+                  <Button key={`pn-${s.id}`} label={schedCount(s.id) ? `✉ ${schedCount(s.id)}` : '✉ +'} variant={sUi?.mode === 'new' && sUi.sid === s.id ? 'primary' : 'secondary'} onPress={() => void schedOpen($, { mode: 'new', sid: s.id })} />
                 </Box>
                 {tag && <Text size="caption" color={tag.color} wrap="truncate">{tag.text}</Text>}
+                {queue(s.id)}
               </Box>
             )
           })}
@@ -1388,7 +1628,8 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    refresh($).catch(err => update($, status, () => `Error: ${String(err).slice(0, 120)}`))
+    await schedTurnDone($).catch(() => {})
+    refresh($).catch(err => update($, status, () => `Error: ${String(err).slice(0, 120)}`).catch(() => {}))
     return result
   })
 
@@ -1409,6 +1650,8 @@ export const register: Register = on => {
     const now = await read($, nowMs)
     const braked = await read($, isBraked)
     const resume = await read($, resumeAt)
+    await read($, schedRev)
+    const mySched = (await schedList($)).some(i => i.sid === me)
 
     if (await read($, isMin)) {
       return next(e)
@@ -1486,6 +1729,7 @@ export const register: Register = on => {
             return (
               <Box flexDirection="row" alignItems="center" gap="xs">
                 {dot}
+                {mySched && <Text size="caption" color={SCHED_COLOR}>⏱</Text>}
                 {snap.resetsAt && sleepsThrough(snap.resetsAt) && <Text size="caption" color="#a5b4fc">☾</Text>}
                 <Text size="caption" dimColor wrap="truncate">{!snap.resetsAt ? (mode === 'wide' ? L('bloque nuevo · empieza con tu próximo mensaje', 'new block · starts with your next message') : L('bloque nuevo', 'new block')) : mode === 'wide' ? L(`se reinicia en ${left(snap.resetsAt, now)}`, `resets in ${left(snap.resetsAt, now)}`) : leftShort(snap.resetsAt, now)}</Text>
               </Box>

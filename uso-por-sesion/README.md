@@ -55,6 +55,16 @@ Los comandos con número o texto (`/uso-limite 30`, `/uso-pausar 3`): presiona *
 - **⚙** (en la franja, donde antes estaba la ✕) abre el panel. **Pausar todas** y **Reanudar todas** están en la pestaña **Sesiones**; **Ocultar franja**, en **Ajustes**.
 - Al pie aparece **Continuar** cuando esta sesión está frenada.
 
+## Prompts programados
+
+Para dejar trabajo listo cuando se reinicia el límite, sin quedarte despierto y sin gastar tokens al programarlo:
+
+- En el panel → **Sesiones**, el botón **✉** de cada sesión abre un cuadro para escribir el prompt y elegir cuándo sale: **próximo bloque** (al reiniciarse el de 5 h, con el margen de reanudación), **reinicio semanal** o una **hora** (si ya pasó hoy, mañana).
+- La cola de cada sesión se ordena por hora de envío. Cada prompt tiene **✎** (editar), **+** (un seguimiento justo después de ese, que sale cuando Claude termine de responderlo) y **✕** (cancelar; sus seguimientos suben un nivel).
+- El prompt se envía en esa sesión como si lo escribieras tú. Nunca mientras está frenada o pausada: espera a que nada la frene. Reemplaza al aviso automático de "continúa donde quedaste".
+- Mientras una sesión tenga prompts programados, el mod le pide al sistema que **no suspenda el computador** (Windows, macOS o Linux) y lo libera cuando la cola queda vacía. Si igual despierta tarde, lo pendiente sale apenas vuelve.
+- Requiere la app de Claude abierta con esa sesión. Programar no gasta tokens: el texto queda en el almacén local del mod hasta su hora. En la franja, **⏱** indica que esta sesión tiene algo programado.
+
 ## Configuración
 
 En **⚙ Configuración → Ajustes** cada persona ajusta con − / +:

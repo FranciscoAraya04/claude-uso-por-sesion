@@ -319,3 +319,85 @@ test('"Pausar todas" llega también a la 9.ª sesión en adelante', async ($, on
   expect(store.get('pausa:s9')).toBe(true)
   await pane.unmount()
 })
+
+const PANE = {
+  plugin: 'uso-por-sesion', component: 'Pane', requestId: 'uso-config', surface: 'desktop',
+  props: { title: 'Uso por sesión', isFocused: false, bodyColumns: 90, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} },
+} as const
+
+test('desde el panel se programa un prompt, se edita y se le agrega un seguimiento', async ($, on) => {
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }]])
+  setup(on, store, 30, [{ id: 'yo', title: 'Mía', w: 1 }])
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  await $.command.run({ command: 'uso-limite', args: '90' })
+  const pane = await $.ui.mount(PANE)
+  await pane.press({ key: 'pn-yo' })
+  await pane.input({ key: 'si-yo', text: 'Arma el informe', kind: 'change' })
+  await pane.press({ key: 'st-time-yo' })
+  await pane.input({ key: 'sh-yo', text: '7:30', kind: 'change' })
+  await pane.press({ key: 'ss-yo' })
+  const list = store.get('programados') as { id: string; text: string; type: string; time: string; after: string | null }[]
+  expect(list.length).toBe(1)
+  expect(list[0]!.type).toBe('time')
+  expect(list[0]!.time).toBe('07:30')
+  const id = list[0]!.id
+  await pane.press({ key: `pe-${id}` })
+  await pane.input({ key: 'si-yo', text: 'Arma el informe final', kind: 'change' })
+  await pane.press({ key: 'ss-yo' })
+  expect((store.get('programados') as { text: string }[])[0]!.text).toBe('Arma el informe final')
+  await pane.press({ key: `pf-${id}` })
+  await pane.input({ key: 'si-yo', text: 'Revisa las figuras', kind: 'change' })
+  await pane.press({ key: 'ss-yo' })
+  const after = store.get('programados') as { text: string; after: string | null }[]
+  expect(after.find(i => i.text === 'Revisa las figuras')!.after).toBe(id)
+  await pane.press({ key: `px-${id}` })
+  const left = store.get('programados') as { text: string; after: string | null; type: string }[]
+  expect(left.length).toBe(1)
+  expect(left[0]!.after).toBe(null)
+  expect(left[0]!.type).toBe('time')
+  await pane.unmount()
+})
+
+test('un prompt programado vacío no se guarda y avisa', async ($, on) => {
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }]])
+  setup(on, store, 30, [{ id: 'yo', title: 'Mía', w: 1 }])
+  await $.command.run({ command: 'uso-limite', args: '90' })
+  const pane = await $.ui.mount(PANE)
+  await pane.press({ key: 'pn-yo' })
+  await pane.press({ key: 'ss-yo' })
+  expect(store.get('programados')).toBeUndefined()
+  expect(await pane.find({ type: 'Text', text: /Escribe el prompt primero/ })).toBeTruthy()
+  await pane.unmount()
+})
+
+test('a su hora sale el prompt programado y no su seguimiento', async ($, on) => {
+  const sent: string[] = []
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }], ['programados', [
+    { id: 'a', sid: 'yo', text: 'Primero', type: 'next', at: Date.now() - 1000, after: null },
+    { id: 'b', sid: 'yo', text: 'Después', type: 'next', at: Date.now() - 1000, after: 'a' },
+    { id: 'c', sid: 'otra', text: 'De otra sesión', type: 'next', at: Date.now() - 1000, after: null },
+  ]]])
+  const resetsAt = new Date(Date.now() + 3600e3).toISOString()
+  on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: 10, resetsAt }] } }))
+  on('session.id', () => ({ value: 'yo' }))
+  on('store.get', (_, e) => ({ value: store.get(e.key) }))
+  on('store.set', (_, e) => (store.set(e.key, e.value), { value: undefined }))
+  on('store.delete', (_, e) => (store.delete(e.key), { value: undefined }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ sessions: [{ id: 'yo', title: 'Mía', w: 1 }] }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: Date.now() }))
+  on('prompt.submit', (_, e) => (sent.push(e.text), { text: e.text }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: {} }))
+  on('clock.every', () => ({ value: {} }))
+  on('session.cwd', () => ({ value: '/' }))
+  on('turn.complete', () => ({ text: '' }) as never)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await new Promise(r => setTimeout(r, 50))
+  expect(sent).toEqual(['Primero'])
+  const left = store.get('programados') as { id: string }[]
+  expect(left.map(i => i.id).sort()).toEqual(['b', 'c'])
+  await $.turn.complete({ reason: 'answer', answer: 'listo' } as never)
+  expect(sent).toEqual(['Primero', 'Después'])
+  expect((store.get('programados') as { id: string }[]).map(i => i.id)).toEqual(['c'])
+})
