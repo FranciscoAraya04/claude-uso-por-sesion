@@ -444,3 +444,84 @@ test('en inglés los comandos programados responden en inglés y la pestaña Com
     expect(await pane.find({ type: 'Text', text: t })).toBeTruthy()
   await pane.unmount()
 })
+
+// Motor para los envíos programados: uso del bloque ajustable, prompts enviados y fin de turno.
+function schedEnv(on: Parameters<Parameters<typeof test>[1]>[1], store: Map<string, unknown>, sent: string[], pct = { v: 10 }) {
+  const resetsAt = new Date(Date.now() + 3600e3).toISOString()
+  on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [{ kind: 'five_hour', percentUsed: pct.v, resetsAt }] } }))
+  on('session.id', () => ({ value: 'yo' }))
+  on('store.get', (_, e) => ({ value: store.get(e.key) }))
+  on('store.set', (_, e) => (store.set(e.key, e.value), { value: undefined }))
+  on('store.delete', (_, e) => (store.delete(e.key), { value: undefined }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ sessions: [{ id: 'yo', title: 'Mía', w: 1 }] }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: Date.now() }))
+  on('prompt.submit', (_, e) => (sent.push(e.text), { text: e.text }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: {} }))
+  on('clock.every', () => ({ value: {} }))
+  on('session.cwd', () => ({ value: '/' }))
+  on('tool.call', () => ({ result: {} }))
+  on('turn.start', () => ({ turnId: 't1' }) as never)
+  on('turn.complete', () => ({ text: '' }) as never)
+  return pct
+}
+const cfgOff = () => ['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }] as [string, unknown]
+const chain = () => ['programados', [
+  { id: 'a', sid: 'yo', text: 'Primero', type: 'next', at: Date.now() - 1000, after: null },
+  { id: 'b', sid: 'yo', text: 'Después', type: 'next', at: Date.now() - 1000, after: 'a' },
+]] as [string, unknown]
+
+test('el fin de un subagente no suelta el seguimiento; el fin del turno sí', async ($, on) => {
+  const sent: string[] = []
+  const store = new Map<string, unknown>([cfgOff(), chain()])
+  schedEnv(on, store, sent)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await new Promise(r => setTimeout(r, 50))
+  expect(sent).toEqual(['Primero'])
+  await $.turn.complete({ reason: 'answer', answer: 'parte', agentId: 'sub-1' } as never)
+  expect(sent).toEqual(['Primero'])
+  await $.turn.complete({ reason: 'answer', answer: 'listo' } as never)
+  expect(sent).toEqual(['Primero', 'Después'])
+})
+
+test('si el freno corta el prompt, el seguimiento espera a que se retome', async ($, on) => {
+  const sent: string[] = []
+  const store = new Map<string, unknown>([cfgOff(), chain()])
+  const pct = schedEnv(on, store, sent)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await new Promise(r => setTimeout(r, 50))
+  expect(sent).toEqual(['Primero'])
+  pct.v = 90
+  const r = await $.tool.call({ tool: 'Bash', command: 'ls' })
+  expect('deny' in r).toBe(true)
+  await $.turn.complete({ reason: 'answer', answer: 'Me detengo por el freno.' } as never)
+  expect(sent).toEqual(['Primero'])
+  expect((store.get('programados') as { id: string; after: string | null }[]).find(i => i.id === 'b')!.after).toBe('a')
+})
+
+test('si interrumpes el prompt, el seguimiento queda en espera y no sale solo', async ($, on) => {
+  const sent: string[] = []
+  const store = new Map<string, unknown>([cfgOff(), chain()])
+  schedEnv(on, store, sent)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await new Promise(r => setTimeout(r, 50))
+  await $.turn.complete({ reason: 'aborted', answer: '' } as never)
+  expect(sent).toEqual(['Primero'])
+  const b = (store.get('programados') as { id: string; held?: boolean; after: string | null }[]).find(i => i.id === 'b')!
+  expect(b.held).toBe(true)
+  expect(b.after).toBe(null)
+})
+
+test('nada programado sale mientras la sesión está trabajando', async ($, on) => {
+  const sent: string[] = []
+  const store = new Map<string, unknown>([cfgOff()])
+  schedEnv(on, store, sent)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.turn.start({ turnId: 't1' } as never)
+  store.set('programados', [{ id: 'x', sid: 'yo', text: 'Ahora', type: 'next', at: Date.now() - 1000, after: null }])
+  await $.command.run({ command: 'uso-programar', args: '23:59 Otro' })
+  expect(sent).toEqual([])
+  await $.turn.complete({ reason: 'answer', answer: 'listo' } as never)
+  expect(sent).toEqual(['Ahora'])
+})

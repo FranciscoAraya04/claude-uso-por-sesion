@@ -44,6 +44,9 @@ const schedDraft = atom({ plugin: 'uso-por-sesion', key: 'schedDraft' } as const
 const schedErr = atom({ plugin: 'uso-por-sesion', key: 'schedErr' } as const, '')
 const schedActive = atom({ plugin: 'uso-por-sesion', key: 'schedActive' } as const, '')
 const schedRev = atom({ plugin: 'uso-por-sesion', key: 'schedRev' } as const, 0)
+// Desde cuándo esta sesión está trabajando en un turno (0 = libre): nada programado sale en medio de uno.
+const busyAt = atom({ plugin: 'uso-por-sesion', key: 'busyAt' } as const, 0)
+const BUSY_MAX = 6 * 3600e3
 const SCHED_KEY = 'programados'
 // Lo que se va escribiendo en el cuadro: se guarda sin redibujar el panel (redibujar con cada tecla hacía
 // parpadear el cuadro y, al escribir rápido, el texto viejo pisaba al nuevo). Se aplica al guardar o al cambiar de opción.
@@ -789,6 +792,7 @@ function schedOrdered(list: Scheduled[], sid: string) {
 }
 
 function schedLabel(i: Scheduled) {
+  if (i.held) return L('En espera · el anterior no terminó', 'On hold · the previous one did not finish')
   if (i.after) return L('Después del anterior', 'After the previous one')
   const iso = new Date(i.at).toISOString()
   if (i.type === 'next') return L(`Próximo bloque · ${hhmm(iso)}`, `Next block · ${hhmm(iso)}`)
@@ -812,7 +816,7 @@ async function schedSubmit($: $T) {
     const it = list.find(i => i.id === ui.id)
     if (it) {
       it.text = text
-      if (!it.after) Object.assign(it, { type: d.type, time, at: await schedAt($, d.type, time) })
+      if (!it.after) Object.assign(it, { type: d.type, time, at: await schedAt($, d.type, time), held: false })
     }
   } else if (ui.mode === 'follow') {
     const parent = list.find(i => i.id === ui.id)
@@ -889,15 +893,29 @@ function keepAwake($: $T, on: boolean) {
 
 // Envía, en esta sesión, el próximo prompt que toca: un seguimiento cuyo anterior ya tuvo respuesta, o uno
 // cuya hora llegó. Nunca mientras la sesión está frenada o pausada: espera a que nada la frene.
+// Un solo envío a la vez: dos revisiones simultáneas (el minuto y el fin de un turno) no mandan dos veces lo mismo.
+let firing = false
 async function schedFire($: $T) {
+  if (firing) return false
+  firing = true
+  try {
+    return await schedFireOnce($)
+  } finally {
+    firing = false
+  }
+}
+
+async function schedFireOnce($: $T) {
   const me = await $.session.id()
   const list = await schedList($)
   const mine = list.filter(i => i.sid === me)
-  keepAwake($, mine.length > 0)
+  keepAwake($, mine.some(i => !i.held))
   if (!mine.length || (await read($, schedActive))) return false
+  const busy = await read($, busyAt)
+  if (busy && Date.now() - busy < BUSY_MAX) return false
   if (await stopReason($)) return false
   const ids = new Set(list.map(i => i.id))
-  const due = mine.filter(i => (!i.after || !ids.has(i.after)) && i.at <= Date.now()).sort((a, b) => a.at - b.at)[0]
+  const due = mine.filter(i => !i.held && (!i.after || !ids.has(i.after)) && i.at <= Date.now()).sort((a, b) => a.at - b.at)[0]
   if (!due) return false
   await schedSave($, list.filter(i => i !== due))
   await update($, schedActive, () => due.id)
@@ -907,14 +925,20 @@ async function schedFire($: $T) {
   return true
 }
 
-// Al terminar un turno: los seguimientos del prompt enviado quedan listos para salir de inmediato.
-async function schedTurnDone($: $T) {
+// Al terminar un turno de la sesión (no de un subagente): los seguimientos del prompt enviado salen de
+// inmediato si el turno terminó con respuesta. Si el freno o una pausa lo cortaron, primero se retoma el
+// prompt ("continúa donde quedaste") y la cola sigue cuando ese turno termina. Si lo interrumpiste tú o
+// hubo un error, los seguimientos quedan en espera hasta que les des hora.
+async function schedTurnDone($: $T, reason: string) {
   const active = await read($, schedActive)
-  if (!active) return
-  const list = await schedList($)
-  for (const c of list) if (c.after === active) Object.assign(c, { after: null, at: 0 })
-  await schedSave($, list)
-  await update($, schedActive, () => '')
+  if (active) {
+    if (await read($, stoppedBy)) return
+    const list = await schedList($)
+    const answered = reason === 'answer'
+    for (const c of list) if (c.after === active) Object.assign(c, { after: null, at: 0 }, answered ? {} : { held: true })
+    await schedSave($, list)
+    await update($, schedActive, () => '')
+  }
   await schedFire($)
 }
 
@@ -1280,6 +1304,7 @@ export const register: Register = on => {
     }
     await update($, nowMs, () => Date.now())
     await markAlive($, true).catch(() => {})
+    await update($, busyAt, () => 0)
     void schedFire($).catch(() => false)
     $.clock.every(60000, async () => {
       await loadCfg($)
@@ -1773,9 +1798,18 @@ export const register: Register = on => {
   on('command.run', { command: 'uso' }, cmdUso)
   on('command.run', { command: 'session-usage' }, cmdUso)
 
+  on('turn.start', async ($, e, next) => {
+    const result = await next(e)
+    if (e.agentId === undefined) await update($, busyAt, () => Date.now()).catch(() => {})
+    return result
+  })
+
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    await schedTurnDone($).catch(() => {})
+    // El fin de un subagente no es el fin del turno: la sesión sigue trabajando.
+    if (e.agentId !== undefined) return result
+    await update($, busyAt, () => 0).catch(() => {})
+    await schedTurnDone($, e.reason).catch(() => {})
     refresh($).catch(err => update($, status, () => `Error: ${String(err).slice(0, 120)}`).catch(() => {}))
     return result
   })
