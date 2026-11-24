@@ -1796,18 +1796,14 @@ export const register: Register = on => {
               {wk === 0 && L(' Línea punteada: proyección lineal; raya gris: ahora.', ' Dashed line: linear projection; gray line: now.')}</Text>
             {wk === 0 && snapNow?.weekly != null && (() => {
               const r = weekPerBlockPct(all, Date.now())
-              if (r === null) return <Text size="caption" dimColor>{L('Bloques de 5 h que te quedan: aún faltan datos (se calcula con tus ventanas guardadas).', '5-hour blocks left: not enough data yet (it is estimated from your saved windows).')}</Text>
+              if (r === null) return <Text size="caption" dimColor>{L('Bloques de 5 horas restantes: aún faltan datos.', '5-hour blocks left: not enough data yet.')}</Text>
               const left = Math.max(0, 100 - snapNow.weekly)
-              const perBlock = r * 100
-              const reach = Math.min(100, (snapNow.fiveHour ?? 0) + left / r)
-              const blocks = left / perBlock
-              const blocksTxt = blocks >= 10 ? fmt(Math.round(blocks)) : blocks.toFixed(1).replace('.', CFG.lang === 'en' ? '.' : ',')
-              return (
-                <Text size="caption" weight="medium" color={reach < 100 ? '#f59e0b' : undefined}>
-                  {L(`Te queda ${fmt(left)} % semanal ≈ ${blocksTxt} bloques de 5 h completos (un bloque gasta ~${fmt(perBlock)} % de la semana).`, `${fmt(left)} % weekly left ≈ ${blocksTxt} full 5-hour blocks (a block uses ~${fmt(perBlock)} % of the week).`)}
-                  {reach < 100 && L(` En este bloque llegarías hasta ~${fmt(reach)} % antes de agotar la semana.`, ` In this block you'd reach ~${fmt(reach)} % before the week runs out.`)}
-                </Text>
-              )
+              const blocks = left / (r * 100)
+              const n = Math.floor(blocks)
+              const what = blocks >= 1
+                ? L(`${n} ${n === 1 ? 'bloque' : 'bloques'} de 5 horas`, `${n} 5-hour ${n === 1 ? 'block' : 'blocks'}`)
+                : L(`el ${fmt(blocks * 100)} % de un bloque de 5 horas`, `${fmt(blocks * 100)} % of a 5-hour block`)
+              return <Text size="caption" weight="medium">{L(`Con ${fmt(left)} % semanal restante, alcanza para ${what}.`, `With ${fmt(left)} % of the week left, that's enough for ${what}.`)}</Text>
             })()}
             {(() => {
               const v = wk === 0 ? snapNow?.weekUsd : costs[wkEnd]

@@ -12,7 +12,7 @@ This plugin adds a compact band above the prompt, in the terminal and the deskto
 - **brakes every session at 83 %** (configurable), with a clean stop: tools are blocked and Claude writes a 2–3 line summary of where it left off;
 - keeps the rest of the block **in reserve** for anything urgent, with a one-session **∞** mode and a Continue button;
 - **resumes braked sessions automatically** after the reset;
-- shows a **pace dot** and a **history** of 5-hour windows and days, including a weekly projection of when you'd reach 100 % and how many full 5-hour blocks your remaining weekly limit covers (and how far you can take the current block).
+- shows a **pace dot** and a **history** of 5-hour windows and days, including a weekly projection of when you'd reach 100 % and how many 5-hour blocks your remaining weekly limit covers (or what % of one).
 
 Everything is available in **English and Spanish** (⚙ Settings → Language).
 
