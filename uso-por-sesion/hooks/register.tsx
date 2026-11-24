@@ -357,6 +357,23 @@ function historyChart(list: Bucket[], width: number, showBrake: boolean) {
 // Uso semanal en su periodo real (del inicio al reinicio semanal), con días marcados y
 // la proyección lineal al ritmo actual; hit = cuándo llegaría al 100 % antes del reinicio.
 // En una semana pasada (past) no hay proyección ni raya de "ahora"; final = % con que terminó.
+// Cuánto % de la semana consume un 1 % del bloque de 5 h, según tus ventanas de las últimas 3 semanas:
+// lo que subió el semanal entre una ventana y la anterior, dividido por el % que se usó en ella.
+// Sin datos suficientes (menos de una ventana completa en total) devuelve null.
+function weekPerBlockPct(all: HistoryBlock[], now: number): number | null {
+  const list = all.filter(b => b.weekly !== null && now - Date.parse(b.resetsAt) < 21 * 86400e3)
+    .sort((a, b) => Date.parse(a.resetsAt) - Date.parse(b.resetsAt))
+  let dw = 0, dp = 0
+  for (let k = 1; k < list.length; k++) {
+    const d = list[k]!.weekly! - list[k - 1]!.weekly!
+    // Si bajó, entre medio se reinició la semana: ese par no sirve.
+    if (d < 0 || list[k]!.pct <= 0) continue
+    dw += d
+    dp += list[k]!.pct
+  }
+  return dp >= 100 && dw > 0 ? dw / dp : null
+}
+
 function weeklyChart(list: HistoryBlock[], width: number, endIso: string, now: number, current: number | null, past = false): { svg: string; hit: number | null; final: number | null } {
   const ht = 130, top = 10, bottom = 22, left = 30, right = 8, plot = ht - top - bottom
   const end = Date.parse(endIso), start = end - SEVEN_DAYS
@@ -1777,6 +1794,21 @@ export const register: Register = on => {
               ? L(`A este ritmo llegas al 100 % el ${dayName(new Date(weekly.hit).toISOString())} a las ${hhmm(new Date(weekly.hit).toISOString())}, antes del reinicio (${dayName(weekly.end)} ${hhmm(weekly.end)}).`, `At this pace you hit 100 % on ${dayName(new Date(weekly.hit).toISOString())} at ${hhmm(new Date(weekly.hit).toISOString())}, before the reset (${dayName(weekly.end)} ${hhmm(weekly.end)}).`)
               : L(`A este ritmo no llegas al 100 % antes del reinicio (${dayName(weekly.end)} ${hhmm(weekly.end)}).`, `At this pace you won't hit 100 % before the reset (${dayName(weekly.end)} ${hhmm(weekly.end)}).`)}
               {wk === 0 && L(' Línea punteada: proyección lineal; raya gris: ahora.', ' Dashed line: linear projection; gray line: now.')}</Text>
+            {wk === 0 && snapNow?.weekly != null && (() => {
+              const r = weekPerBlockPct(all, Date.now())
+              if (r === null) return <Text size="caption" dimColor>{L('Bloques de 5 h que te quedan: aún faltan datos (se calcula con tus ventanas guardadas).', '5-hour blocks left: not enough data yet (it is estimated from your saved windows).')}</Text>
+              const left = Math.max(0, 100 - snapNow.weekly)
+              const perBlock = r * 100
+              const reach = Math.min(100, (snapNow.fiveHour ?? 0) + left / r)
+              const blocks = left / perBlock
+              const blocksTxt = blocks >= 10 ? fmt(Math.round(blocks)) : blocks.toFixed(1).replace('.', CFG.lang === 'en' ? '.' : ',')
+              return (
+                <Text size="caption" weight="medium" color={reach < 100 ? '#f59e0b' : undefined}>
+                  {L(`Te queda ${fmt(left)} % semanal ≈ ${blocksTxt} bloques de 5 h completos (un bloque gasta ~${fmt(perBlock)} % de la semana).`, `${fmt(left)} % weekly left ≈ ${blocksTxt} full 5-hour blocks (a block uses ~${fmt(perBlock)} % of the week).`)}
+                  {reach < 100 && L(` En este bloque llegarías hasta ~${fmt(reach)} % antes de agotar la semana.`, ` In this block you'd reach ~${fmt(reach)} % before the week runs out.`)}
+                </Text>
+              )
+            })()}
             {(() => {
               const v = wk === 0 ? snapNow?.weekUsd : costs[wkEnd]
               const text = v !== undefined && v < 0

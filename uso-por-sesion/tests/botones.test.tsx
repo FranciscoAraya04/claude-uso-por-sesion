@@ -525,3 +525,23 @@ test('nada programado sale mientras la sesión está trabajando', async ($, on) 
   await $.turn.complete({ reason: 'answer', answer: 'listo' } as never)
   expect(sent).toEqual(['Ahora'])
 })
+
+test('el historial estima cuántos bloques de 5 h quedan de la semana', async ($, on) => {
+  const day = 86400e3
+  const store = new Map<string, unknown>([['config', { lang: 'es', sleepStart: 0, sleepEnd: 0 }], ['historial', [
+    { resetsAt: new Date(Date.now() - 1 * day).toISOString(), pct: 50, weekly: 60, top: [] },
+    { resetsAt: new Date(Date.now() - 1.5 * day).toISOString(), pct: 50, weekly: 50, top: [] },
+    { resetsAt: new Date(Date.now() - 2 * day).toISOString(), pct: 30, weekly: 40, top: [] },
+  ]]])
+  setupWeek(on, store, { sessions: [{ id: 'yo', title: 'Mía', w: 1 }], weekly: [], titles: {} })
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  await $.command.run({ command: 'uso-limite', args: '90' })
+  await $.command.run({ command: 'uso-historial', args: '' })
+  const pane = await $.ui.mount({
+    plugin: 'uso-por-sesion', component: 'Pane', requestId: 'uso-config', surface: 'desktop',
+    props: { title: 'Uso por sesión', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
+  })
+  // Semanal 60 % usado: quedan 40 %, y cada bloque completo gastó entre 10 y 20 % de la semana.
+  expect(await pane.find({ type: 'Text', text: /^Te queda 40 % semanal ≈ \d+,\d bloques de 5 h completos \(un bloque gasta ~1\d % de la semana\)\.$/ })).toBeTruthy()
+  await pane.unmount()
+})
