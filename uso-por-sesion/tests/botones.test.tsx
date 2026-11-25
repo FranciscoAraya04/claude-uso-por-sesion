@@ -542,6 +542,6 @@ test('el historial estima cuántos bloques de 5 h quedan de la semana', async ($
     props: { title: 'Uso por sesión', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
   })
   // Semanal 60 % usado: quedan 40 %, y cada bloque completo gastó entre 10 y 20 % de la semana.
-  expect(await pane.find({ type: 'Text', text: /^Con 40 % semanal restante, alcanza para 2 bloques de 5 horas\.$/ })).toBeTruthy()
+  expect(await pane.find({ type: 'Text', text: /^Con 40 % semanal restante, alcanza para 2,\d bloques de 5 horas\.$/ })).toBeTruthy()
   await pane.unmount()
 })

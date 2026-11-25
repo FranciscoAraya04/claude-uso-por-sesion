@@ -1799,9 +1799,10 @@ export const register: Register = on => {
               if (r === null) return <Text size="caption" dimColor>{L('Bloques de 5 horas restantes: aún faltan datos.', '5-hour blocks left: not enough data yet.')}</Text>
               const left = Math.max(0, 100 - snapNow.weekly)
               const blocks = left / (r * 100)
-              const n = Math.floor(blocks)
+              const n = Math.round(blocks * 10) / 10
+              const nTxt = n.toFixed(1).replace('.', CFG.lang === 'en' ? '.' : ',')
               const what = blocks >= 1
-                ? L(`${n} ${n === 1 ? 'bloque' : 'bloques'} de 5 horas`, `${n} 5-hour ${n === 1 ? 'block' : 'blocks'}`)
+                ? L(`${nTxt} ${n === 1 ? 'bloque' : 'bloques'} de 5 horas`, `${nTxt} 5-hour ${n === 1 ? 'block' : 'blocks'}`)
                 : L(`el ${fmt(blocks * 100)} % de un bloque de 5 horas`, `${fmt(blocks * 100)} % of a 5-hour block`)
               return <Text size="caption" weight="medium">{L(`Con ${fmt(left)} % semanal restante, alcanza para ${what}.`, `With ${fmt(left)} % of the week left, that's enough for ${what}.`)}</Text>
             })()}
