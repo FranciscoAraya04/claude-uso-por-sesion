@@ -124,18 +124,27 @@ test('la configuración muestra los ajustes por defecto', async ($, on) => {
   await ui.unmount()
 })
 
-test('una sesión ∞ ignora el freno global pero se detiene antes del 100 %', async ($, on) => {
+test('una sesión ∞ ignora el freno global', async ($, on) => {
   const { store, resetsAt } = engine(on, 90)
   store.set('sinfreno:yo', resetsAt)
   const r = await $.tool.call({ tool: 'Bash', command: 'ls' })
   expect('deny' in r).toBe(false)
 })
 
-test('una sesión ∞ cierra al llegar a 100 % menos el margen', async ($, on) => {
+test('una sesión ∞ cerca del 100 % no se detiene: avisa una sola vez', async ($, on) => {
   const { store, resetsAt } = engine(on, 98.5)
   store.set('sinfreno:yo', resetsAt)
   const r = await $.tool.call({ tool: 'Bash', command: 'ls' })
-  expect('deny' in r && String(r.deny)).toContain('Límite real cerca')
+  expect('deny' in r).toBe(false)
+  expect(String((r as { context?: string[] }).context)).toContain('Anthropic cortará')
+  const r2 = await $.tool.call({ tool: 'Bash', command: 'ls' })
+  expect('deny' in r2).toBe(false)
+  expect((r2 as { context?: string[] }).context).toBeUndefined()
+  const p = await $.prompt.submit({ text: 'hola' })
+  expect('drop' in p).toBe(false)
+  // Queda programada la reanudación para el próximo bloque, una sola vez.
+  const q = store.get('programados') as { type: string; text: string }[]
+  expect(q.filter(it => it.type === 'next' && it.text.includes('Continúa')).length).toBe(1)
 })
 
 test('/uso-sin-freno activa el ∞ de esta sesión', async ($, on) => {
@@ -144,7 +153,7 @@ test('/uso-sin-freno activa el ∞ de esta sesión', async ($, on) => {
   expect(store.get('sinfreno:yo')).toBe(resetsAt)
 })
 
-test('en horario de sueño el freno global no aplica, pero sí el corte antes del 100 %', async ($, on) => {
+test('en horario de sueño nada se detiene: cerca del 100 % solo avisa', async ($, on) => {
   const reset = new Date(); reset.setHours(3, 0, 0, 0); if (reset.getTime() < Date.now()) reset.setDate(reset.getDate() + 1)
   const resetsAt = reset.toISOString()
   let pct = 90
@@ -158,9 +167,13 @@ test('en horario de sueño el freno global no aplica, pero sí el corte antes de
   on('ui.toast', () => ({ value: undefined }))
   on('clock.now', () => ({ value: Date.now() }))
   on('tool.call', () => ({ result: {} }))
+  on('prompt.submit', (_, e) => ({ text: e.text }))
   const ok = await $.tool.call({ tool: 'Bash', command: 'ls' })
   expect(JSON.stringify(ok)).not.toContain('Freno de uso')
   pct = 99
   const r = await $.tool.call({ tool: 'Bash', command: 'ls' })
-  expect(JSON.stringify(r)).toContain('Límite real cerca')
+  expect('deny' in r).toBe(false)
+  expect(JSON.stringify(r)).toContain('Anthropic cortará')
+  const p = await $.prompt.submit({ text: 'hola' })
+  expect('drop' in p).toBe(false)
 })

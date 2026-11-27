@@ -78,12 +78,12 @@ Leave work queued for when the limit resets, without staying up and without spen
 | Setting | Default | What it does |
 | --- | --- | --- |
 | Global brake | 83 % | % of the 5-hour block at which every session stops. What's left above it is the margin to close cleanly. |
-| Close margin | 2 % | How far before a cap (or 100 % for an ∞ session) the clean stop starts. |
+| Close margin | 2 % | How far before a cap the clean stop starts (and, near 100 %, when the cutoff heads-up is given). |
 | Resume after reset | 2 min | Wait after the reset before braked sessions resume. |
 | Default cap | 35 % | Cap for any session without its own (0 = no cap). |
 | − / + step | 10 % | How much each tap changes a session's cap. |
 | No-brake sessions (∞) | 1 | How many sessions can ignore the global brake at once (0 = off). |
-| Sleep from / until | 23:00 – 07:00 | If the 5-hour block resets within these hours, the global brake and 5-hour caps don't apply (sessions still stop at 100 % minus the close margin). Toggle it in the **☾ Sleep hours** section (on by default); a moon ☾ on the band shows when it applies. |
+| Sleep from / until | 23:00 – 07:00 | If the 5-hour block resets within these hours, the global brake and 5-hour caps don't apply (nothing stops them; at 100 % minus the close margin Claude only gets a heads-up that Anthropic's cutoff is coming). Toggle it in the **☾ Sleep hours** section (on by default); a moon ☾ on the band shows when it applies. |
 | Cap warning | 80 % of cap | When to warn that a session is close to its cap. |
 | Language | system | English or Spanish. |
 

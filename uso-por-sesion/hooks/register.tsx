@@ -563,8 +563,8 @@ async function refresh($: $T) {
       if ((sh as { stop?: string }).stop) continue
       const ok = (k: string) => $.store.get(k).then(v => sameBlock(v, five.resetsAt))
       let stop: 'pausa' | 'tope' | 'freno' | 'limite' | undefined
-      // Con ∞ o en horario de sueño solo frena el límite real (100 % − margen de cierre).
-      if (sh.bypass || night) { if (five.percentUsed >= 100 - CFG.closeMargin) stop = 'limite' }
+      // Con ∞ o en horario de sueño no frena nada: cerca del límite real solo se avisa (el corte de Anthropic no se adelanta).
+      if (sh.bypass || night) { /* sin freno */ }
       else if (five.percentUsed >= CFG.brakeAt && !approved && !(await ok(brakeOkKey(sh.id)))) stop = 'freno'
       else if (!night && sh.cap !== undefined && sh.pct >= Math.max(0, sh.cap - CFG.closeMargin) && !(await ok(capOkKey(sh.id)))) stop = 'tope'
       if (stop) Object.assign(sh, { stop, until })
@@ -688,7 +688,7 @@ const usd = (n: number) => `US$ ${n >= 100 ? Math.round(n).toLocaleString(CFG.la
 
 // Horario de sueño (horas locales; se apaga con su interruptor o con inicio = fin). Si el bloque de 5 h se reinicia dentro de él,
 // el freno global y los topes de 5 h por sesión no aplican: la reserva no se usaría mientras duermes.
-// Las sesiones igual se detienen en 100 % − margen de cierre, antes del corte de Anthropic.
+// Cerca del 100 % no se detiene nada: solo se avisa al modelo para que alcance a cerrar antes del corte de Anthropic.
 function sleepsThrough(resetIso: string | null | undefined) {
   if (!resetIso || !CFG.sleepOn || CFG.sleepStart === CFG.sleepEnd) return false
   const d = new Date(resetIso)
@@ -736,12 +736,12 @@ async function stopReason($: $T): Promise<{ kind: string; text: string; until?: 
   const bypass = sameBlock(await $.store.get(bypassKey(me)), l.resetsAt)
   const night = sleepsThrough(l.resetsAt)
   if (night && !bypass && l.pct >= 100 - CFG.closeMargin) {
-    return { kind: 'limite', text: L(`Límite real cerca: el bloque de 5 h va en ${fmt(l.pct)} % (horario de sueño: sin freno global ni topes de 5 h). La sesión se detiene antes del corte de Anthropic y se reanuda sola a las ${resumeAt}.`,
-      `Real limit close: the 5-hour block is at ${fmt(l.pct)} % (sleep hours: no global brake or 5-hour caps). The session stops before Anthropic's cutoff and resumes on its own at ${resumeAt}.`) }
+    return { kind: 'limite', text: L(`Aviso: el bloque de 5 h va en ${fmt(l.pct)} % y Anthropic cortará al llegar a 100 % (se reinicia a las ${resumeAt}). Nada se detiene antes.`,
+      `Heads-up: the 5-hour block is at ${fmt(l.pct)} % and Anthropic will cut off at 100 % (it resets at ${resumeAt}). Nothing is stopped before that.`) }
   }
   if (bypass && l.pct >= 100 - CFG.closeMargin) {
-    return { kind: 'limite', text: L(`Límite real cerca: el bloque de 5 h va en ${fmt(l.pct)} % y esta sesión (sin freno global) se detiene antes del corte de Anthropic. Se reanuda sola a las ${resumeAt}.`,
-      `Real limit close: the 5-hour block is at ${fmt(l.pct)} % and this session (no global brake) stops before Anthropic's cutoff. It resumes on its own at ${resumeAt}.`) }
+    return { kind: 'limite', text: L(`Aviso: el bloque de 5 h va en ${fmt(l.pct)} % y Anthropic cortará al llegar a 100 % (se reinicia a las ${resumeAt}). Nada se detiene antes.`,
+      `Heads-up: the 5-hour block is at ${fmt(l.pct)} % and Anthropic will cut off at 100 % (it resets at ${resumeAt}). Nothing is stopped before that.`) }
   }
   const brakeOk = bypass || sameBlock(await $.store.get(APPROVED_KEY), l.resetsAt) || sameBlock(await $.store.get(brakeOkKey(me)), l.resetsAt)
   if (!night && l.pct >= CFG.brakeAt && !brakeOk) {
@@ -758,12 +758,36 @@ async function stopReason($: $T): Promise<{ kind: string; text: string; until?: 
   return null
 }
 
+// Cerca del límite real no se bloquea nada: se le avisa una vez (por agente y bloque) al modelo para que alcance a cerrar.
+async function limitNote($: $T, text: string, agentId?: string) {
+  const l = await limit($)
+  if (!l) return null
+  const key = `limite-aviso:${await $.session.id()}:${agentId ?? 'main'}`
+  if (sameBlock(await $.store.get(key), l.resetsAt)) return null
+  await $.store.set(key, l.resetsAt)
+  $.ui.toast(text)
+  // Si Anthropic corta, la sesión se retoma sola en el próximo bloque con un prompt programado (visible y cancelable en la cola).
+  if (!agentId) {
+    const sid = await $.session.id()
+    const resume = RESUME_TEXT().limite
+    const list = await schedList($)
+    if (!list.some(it => it.sid === sid && it.text === resume)) {
+      list.push({ id: `p${Date.now().toString(36)}`, sid, text: resume, type: 'next', time: '07:30', at: await schedAt($, 'next', '07:30'), after: null })
+      await schedSave($, list)
+    }
+  }
+  return `${text} ${agentId
+    ? L('Termina pronto: si tu tarea es larga, entrega lo que tengas marcado como INCOMPLETO y con lo que falta.', 'Wrap up soon: if your task is long, return what you have, marked INCOMPLETE, with what is left.')
+    : L('Prioriza dejar el trabajo en un estado seguro (guardar, anotar el siguiente paso) por si el corte llega a mitad de la tarea.', 'Prioritise leaving the work in a safe state (save, note the next step) in case the cutoff lands mid-task.')}`
+}
+
 async function syncStop($: $T) {
   const r = await stopReason($)
-  const braked = r !== null
+  // El límite real solo avisa: no cuenta como freno ni programa reanudación.
+  const braked = r !== null && r.kind !== 'limite'
   if (braked !== (await read($, isBraked))) await update($, isBraked, () => braked)
   const l = await limit($)
-  const at = r?.until ?? (r && r.kind !== 'pausa' && l ? Date.parse(l.resetsAt) + resumeMargin() : 0)
+  const at = r?.until ?? (r && r.kind !== 'pausa' && r.kind !== 'limite' && l ? Date.parse(l.resetsAt) + resumeMargin() : 0)
   if (at !== (await read($, resumeAt))) await update($, resumeAt, () => at)
   return r
 }
@@ -1342,6 +1366,11 @@ export const register: Register = on => {
   on('tool.call', async ($, e, next) => {
     const r = await syncStop($)
     if (!r) return next(e)
+    if (r.kind === 'limite') {
+      const res = await next(e)
+      const note = await limitNote($, r.text, e.agentId)
+      return note && !res.deny ? { ...res, context: [...(res.context ?? []), note] } : res
+    }
     await update($, stoppedBy, () => r.kind)
     return {
       deny: `${r.text} ${L('No uses más herramientas ni empieces nada nuevo. Responde ahora en 2 o 3 líneas: dónde quedaste y cuál es el siguiente paso.', 'Do not use any more tools or start anything new. Reply now in 2 or 3 lines: where you left off and what the next step is.')}`,
@@ -1351,6 +1380,10 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     if (e.origin?.kind === 'plugin') return next(e)
     const r = await syncStop($)
+    if (r?.kind === 'limite') {
+      const note = await limitNote($, r.text)
+      return next(note ? { ...e, context: [...(e.context ?? []), note] } : e)
+    }
     return r ? { drop: r.text } : next(e)
   })
 
@@ -1579,7 +1612,7 @@ export const register: Register = on => {
       const clock = (v: number) => `${String(Math.floor(v)).padStart(2, '0')}:${v % 1 ? '30' : '00'}`
       const rows: { k: NumKey; label: string; hint: string; step: number; min: number; max: number; wrap?: boolean; show: (v: number) => string }[] = [
         { k: 'brakeAt', label: L('Freno global', 'Global brake'), hint: L('Al llegar a este % del bloque de 5 h se frenan todas las sesiones. Lo que queda sobre el freno es el margen para cerrar ordenado.', 'When the 5-hour block reaches this %, all sessions are braked. What is left above the brake is the margin to wrap up cleanly.'), step: 1, min: 50, max: 99, show: v => `${v} %` },
-        { k: 'closeMargin', label: L('Margen de cierre', 'Wrap-up margin'), hint: L('Cuánto antes del tope de una sesión (o del 100 % en una sesión ∞) empieza el cierre ordenado.', "How far before a session's cap (or 100 % for an ∞ session) the clean wrap-up starts."), step: 1, min: 0, max: 10, show: v => `${v} %` },
+        { k: 'closeMargin', label: L('Margen de cierre', 'Wrap-up margin'), hint: L('Cuánto antes del tope de una sesión empieza el cierre ordenado (y, cerca del 100 %, cuándo se avisa que viene el corte).', "How far before a session's cap the clean wrap-up starts (and, near 100 %, when the cutoff heads-up is given)."), step: 1, min: 0, max: 10, show: v => `${v} %` },
         { k: 'marginMin', label: L('Reanudar tras el reinicio', 'Resume after reset'), hint: L('Minutos de espera después del reinicio antes de retomar las sesiones frenadas.', 'Minutes to wait after the reset before braked sessions pick up again.'), step: 1, min: 0, max: 30, show: v => `${v} min` },
         { k: 'defaultCap', label: L('Tope por defecto', 'Default cap'), hint: L('Tope con que parte toda sesión que no tenga uno propio. 0 = sin tope.', "Cap every session starts with when it has none of its own. 0 = no cap."), step: 5, min: 0, max: 100, show: v => (v ? `${v} %` : L('sin tope', 'no cap')) },
         { k: 'capStep', label: L('Paso de − / +', '− / + step'), hint: L('Cuánto sube o baja el tope de una sesión con cada toque de − / +.', "How much each − / + press raises or lowers a session's cap."), step: 1, min: 1, max: 50, show: v => `${v} %` },
@@ -1622,7 +1655,7 @@ export const register: Register = on => {
                   <Box flexGrow={1} />
                   <Button key="sleep-on" label={cfg.sleepOn ? L('Activado', 'On') : L('Desactivado', 'Off')} variant={cfg.sleepOn ? 'primary' : 'secondary'} onPress={() => void set('sleepOn', cfg.sleepOn ? 0 : 1)} />
                 </Box>
-                <Text size="caption" dimColor>{L('Si el bloque de 5 h se reinicia dentro de este horario, no se aplican el freno global ni los topes de 5 h: las sesiones siguen mientras duermes y se detienen recién en 100 % menos el margen de cierre, antes del corte de Anthropic. Los topes semanales siguen aplicando. En la franja lo indica una luna ☾.', "If the 5-hour block resets within these hours, the global brake and 5-hour caps don't apply: sessions keep going while you sleep and only stop at 100 % minus the close margin, before Anthropic's cutoff. Weekly caps still apply. A moon ☾ on the band shows it.")}</Text>
+                <Text size="caption" dimColor>{L('Si el bloque de 5 h se reinicia dentro de este horario, no se aplican el freno global ni los topes de 5 h: las sesiones siguen mientras duermes sin que nada las detenga; cerca del 100 % solo se le avisa a Claude que viene el corte de Anthropic, para que alcance a cerrar. Los topes semanales siguen aplicando. En la franja lo indica una luna ☾.', "If the 5-hour block resets within these hours, the global brake and 5-hour caps don't apply: sessions keep going while you sleep and nothing stops them; near 100 % Claude only gets a heads-up that Anthropic's cutoff is coming, so it can wrap up. Weekly caps still apply. A moon ☾ on the band shows it.")}</Text>
                 {cfg.sleepOn ? rows.filter(r => isSleep(r.k)).map(row) : null}
                 {rule}
               </Box>

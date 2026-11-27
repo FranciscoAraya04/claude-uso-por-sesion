@@ -77,13 +77,13 @@ En **⚙ Configuración → Ajustes** cada persona ajusta con − / +:
 
 | Ajuste | Por defecto | Qué hace |
 | --- | --- | --- |
-| Margen de cierre | 2 % | Cuánto antes del tope de una sesión (o del 100 % en una sesión ∞) empieza el cierre ordenado. |
+| Margen de cierre | 2 % | Cuánto antes del tope de una sesión empieza el cierre ordenado (y, cerca del 100 %, cuándo se avisa que viene el corte). |
 | Freno global | 83 % | % del bloque de 5 h en que se frenan todas las sesiones. Lo que queda sobre él es el margen para cerrar ordenado. |
 | Reanudar tras el reinicio | 2 min | Espera después del reinicio antes de retomar las sesiones frenadas. |
 | Tope por defecto | 35 % | Tope de toda sesión sin uno propio (0 = sin tope). |
 | Paso de − / + | 10 % | Cuánto sube o baja el tope de una sesión con cada toque. |
 | Sesiones sin freno (∞) | 1 | Cuántas pueden ignorar el freno global a la vez (0 = desactivado). |
-| Dormir desde / hasta | 23:00 – 07:00 | Si el bloque de 5 h se reinicia dentro de ese horario, no aplican el freno global ni los topes de 5 h (las sesiones igual paran en 100 % − margen de cierre). Se enciende o apaga con su interruptor (sección **☾ Horario de sueño**, activado por defecto); en la franja lo indica una luna ☾. |
+| Dormir desde / hasta | 23:00 – 07:00 | Si el bloque de 5 h se reinicia dentro de ese horario, no aplican el freno global ni los topes de 5 h (nada las detiene; en 100 % − margen de cierre solo se le avisa a Claude que viene el corte de Anthropic). Se enciende o apaga con su interruptor (sección **☾ Horario de sueño**, activado por defecto); en la franja lo indica una luna ☾. |
 | Aviso del tope | 80 % del tope | Cuándo avisar que una sesión se acerca a su tope. |
 | Idioma | el del sistema | Español o inglés. |
 
@@ -110,7 +110,7 @@ En **⚙ Configuración → Ajustes** cada persona ajusta con − / +:
 
 ## Freno y reanudación
 
-- **Sesión ∞:** su nombre aparece en azul lavanda (el color de la luna) con ∞ en el desglose y en su propia franja. Ignora el freno global hasta el próximo reinicio, respeta su propio tope y se detiene sola en 100 % − margen de cierre, para no llegar al corte de Anthropic. Las demás, al frenarse, avisan qué sesión sigue sin freno.
+- **Sesión ∞:** su nombre aparece en azul lavanda (el color de la luna) con ∞ en el desglose y en su propia franja. Ignora el freno global hasta el próximo reinicio, respeta su propio tope y no se detiene antes del corte de Anthropic: en 100 % − margen de cierre se le avisa a Claude una vez para que alcance a cerrar. Las demás, al frenarse, avisan qué sesión sigue sin freno.
 - **Topes:** el cierre empieza en *tope − margen de cierre*, así la sesión termina cerca de su tope sin pasarse.
 
 - Al 83 % del bloque (ajustable) (o al tope de una sesión), las herramientas se bloquean y Claude cierra con un resumen corto de dónde quedó. El 2 % restante alcanza para ese cierre.
